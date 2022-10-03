@@ -15,6 +15,7 @@ RUN yum update -y \
     && ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
     && echo 'Asia/Shanghai' > /etc/timezone \
     && rm -rf .git \
+    && find . -name "*.DS_Store" | xargs rm -f \
     && rm -rf build \
     && mkdir build \
     && cd build \
