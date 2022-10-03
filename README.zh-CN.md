@@ -90,7 +90,7 @@
 
 ## 使用
 
-​		作为一个 telegram 自动下载器，显然 autolegram 需要知道你的 telegram 账号信息，比如手机号、实时验证码、双因子密码。这些信息通过在 `/usr/autolegram/tdlib/bin/conf/` 下的 `config.properties` 配置文件传递给应用程序。所以需要手动把配置文件映射到这个路径。配置文件的通用模板在本项目的 config 文件夹。
+​		作为一个 telegram 自动下载器，显然 autolegram 需要知道你的 telegram 账号信息，比如手机号、实时验证码、双因子密码。这些信息通过在 `/usr/autolegram/tdlib/bin/conf/` 下的 `config.properties` 配置文件传递给应用程序。所以需要手动把配置文件映射到这个路径。配置文件的通用模板在本项目的 [config 文件夹](https://github.com/darkaforest/Autolegram/blob/main/conf/config.properties)。
 
 ​		已下载内容会被存储到 `/usr/autolegram/tdlib/bin/output` ，包含全量聊天历史和诊断信息的日志会被存储到 `/usr/autolegram/tdlib/bin/logs`。这两个文件夹需要被映射到宿主机来获取下载内容。
 

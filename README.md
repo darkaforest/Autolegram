@@ -2,7 +2,7 @@
 
 [![standard-readme compliant](https://img.shields.io/badge/readme%20style-standard-green.svg)](https://github.com/RichardLitt/standard-readme) [![license](https://img.shields.io/badge/license-BSL-lightgreen.svg)](https://www.boost.org/LICENSE_1_0.txt) [![platform](https://img.shields.io/badge/platform-docker-blue.svg)](https://hub.docker.com/repository/docker/darkaforest/autolegram)
 
-
+[查看中文文档 Read Chinese Version](https://github.com/darkaforest/Autolegram/blob/main/README.zh-CN.md)
 
 ## Table of Contents
 
@@ -90,11 +90,11 @@ There are three ways to install autolegram.
 
 ## Usage
 
-As a auto downloader for telegram, it's obvious that autolegram need to know your telegram account infos, such as phone number, real time auth code, 2fa password. Those will be passsed to autolegram by config file named config.properties in `/usr/autolegram/tdlib/bin/conf/` , so you need map that file to docker container. The common config template can be found in ./config in this project. 
+As a auto downloader for telegram, it's obvious that autolegram need to know your telegram account infos, such as phone number, real time auth code, 2fa password. Those will be passsed to autolegram by config file named config.properties in `/usr/autolegram/tdlib/bin/conf/` , so you need map that file to docker container. The common config template can be found in [config folder](https://github.com/darkaforest/Autolegram/blob/main/conf/config.properties) in this project. 
 
 The downloaded contents will be stored in `/usr/autolegram/tdlib/bin/output` and the logs contain all chat history and debug info will be stoed in `/usr/autolegram/tdlib/bin/logs`. You need to map those folder out to your host machine to get the contents.
 
-For example, in most case, you can run the docker container as follow. Change the host-path to your path
+For example, in most case, you can run the docker container as follow. Change the `host-path` to your path
 
 ```shell
 $ docker run -d -v /host-path/conf/:/usr/autolegram/tdlib/bin/conf/ -v /host-path/logs/:/usr/autolegram/tdlib/bin/logs/ -v /host-path/output/:/usr/autolegram/tdlib/bin/output darkaforest/autolegram:latest
