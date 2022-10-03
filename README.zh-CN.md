@@ -103,7 +103,7 @@ $ docker run -d -v /host-path/conf/:/usr/autolegram/tdlib/bin/conf/ -v /host-pat
 ​		你放在 `/host-path/conf/` 文件夹下的 `config.properties` 文件应该如下所示。
 
 ```properties
-# 用来登录的用户手机号，不是bot哦
+# 用来登录的用户手机号，不是bot哦。需要包含国家码。如+13334445555，+8611122223333 +866912345678
 telegram.user.phone=
 # 验证码，登录的时候 telegram 会发给你，可能是通过短信或消息。
 # 收到验证码后填到这里，立刻保存文件。这个值会被自动读取

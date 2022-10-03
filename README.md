@@ -103,7 +103,7 @@ $ docker run -d -v /host-path/conf/:/usr/autolegram/tdlib/bin/conf/ -v /host-pat
 And the config.properties in your conf path should be like this.
 
 ```properties
-# user phone number to login telegram user account, NOT bot account
+# user phone number to login telegram user account, NOT bot account. contry code is needed.
 telegram.user.phone=
 # auth code, telegram will send you a code to verify login via sms or telegram
 # put it here after received, it will be auto reload to continue process
