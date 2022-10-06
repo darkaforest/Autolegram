@@ -10,6 +10,8 @@ RUN yum update -y \
     && yum reinstall -y glibc-common \
     && fc-cache -fv \
     && localedef -c -f UTF-8 -i zh_CN zh_CN.UFT-8 \
+    && echo 'LANG="zh_CN.UTF-8"' > /etc/locale.conf \
+    && source /etc/locale.conf \
     && echo "export LC_ALL=zh_CN.UTF-8" >> /etc/profile \
     && source /etc/profile \
     && ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
@@ -32,5 +34,6 @@ RUN yum update -y \
     && cp -r ./autolegram/conf ./autolegram/tdlib/bin \
     && cp -r ./autolegram/logconf ./autolegram/tdlib/bin \
     && mkdir ./autolegram/tdlib/bin/logs
+ENV LANG zh_CN.UTF-8
 WORKDIR /usr/autolegram/tdlib/bin/
 CMD [ "java", "-Djava.library.path=.", "-Djava.util.logging.config.file=./logconf/logging.properties", "-Dfile.encoding=UTF-8", "org.darkaforest.tdlib.autolegram.Autolegram" ]
