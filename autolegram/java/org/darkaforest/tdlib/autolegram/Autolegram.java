@@ -639,7 +639,7 @@ public final class Autolegram {
                     + file.id + ", localPath=" + localPath + ", outputPath=" + outputPath);
             Files.copy(Paths.get(localPath), Paths.get(outputPath));
             LOGGER.info("[download] [sync] copy finish");
-        } catch (IOException e) {
+        } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "[download] [sync] copy file failed" + e);
         }
         File outFile = new File(outputPath);
@@ -914,7 +914,7 @@ public final class Autolegram {
             byte[] buffer = new byte[FILE_READ_BUFFER_SIZE];
             while (dis.read(buffer) > 0) {
             }
-        } catch (IOException e) {
+        } catch (Exception e) {
             throw new RuntimeException(e);
         }
         byte[] digest = md.digest();
@@ -936,7 +936,7 @@ public final class Autolegram {
                 Files.createFile(path);
             }
             Files.write(path, (line + "\n").getBytes(), StandardOpenOption.APPEND);
-        } catch (IOException e) {
+        } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "append file failed", e);
             return false;
         }
@@ -965,7 +965,7 @@ public final class Autolegram {
             if (sb.length() != 0) {
                 Files.write(path, sb.toString().getBytes(), StandardOpenOption.APPEND);
             }
-        } catch (IOException e) {
+        } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "rebuild uniqueId.txt failed", e);
         }
     }
@@ -998,7 +998,7 @@ public final class Autolegram {
             LOGGER.info("[init] output path not exists, start create, value=" + telegramDataPath);
             try {
                 Files.createDirectories(rootPath);
-            } catch (IOException e) {
+            } catch (Exception e) {
                 LOGGER.log(Level.SEVERE, "[init] create output path failed, this is fatal", e);
                 return false;
             }
