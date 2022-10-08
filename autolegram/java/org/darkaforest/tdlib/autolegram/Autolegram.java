@@ -477,6 +477,48 @@ public final class Autolegram {
             long setId = messageAnimatedEmoji.animatedEmoji.sticker.setId;
             long customEmojiId = messageAnimatedEmoji.animatedEmoji.sticker.customEmojiId;
             LOGGER.info("[message] [sticker] emoji=" + emoji + ", setId=" + setId + ", customEmojiId=" + customEmojiId);
+        } else if (messageContent instanceof TdApi.MessageChatJoinByLink) {
+            LOGGER.info("[operation] user joined the group by link, group=" + chat.title + ", userid=" + senderUser.username + ", username=" + senderUser.firstName + " " + senderUser.lastName + ", userPhone=" + senderUser.phoneNumber);
+        } else if (messageContent instanceof TdApi.MessageChatJoinByRequest) {
+            LOGGER.info("[operation] user joined the group by request, group=" + chat.title + ", userid=" + senderUser.username + ", username=" + senderUser.firstName + " " + senderUser.lastName + ", userPhone=" + senderUser.phoneNumber);
+        } else if (messageContent instanceof TdApi.MessageChatAddMembers) {
+            TdApi.MessageChatAddMembers addMembers = (TdApi.MessageChatAddMembers) messageContent;
+            long[] userIds = addMembers.memberUserIds;
+            if (userIds != null && userIds.length != 0) {
+                for (long userid : userIds) {
+                    TdApi.User joinUser = USERS.get(userid);
+                    if (joinUser == null) {
+                        LOGGER.info("[operation] user has been added to the group, group=" + chat.title + ", userid=" + userid);
+                    } else {
+                        LOGGER.info("[operation] user has been added to the group, group=" + chat.title + ", userid=" + joinUser.username + ", username=" + joinUser.firstName + " " + joinUser.lastName + ", userPhone=" + joinUser.phoneNumber);
+                    }
+                }
+            }
+        } else if (messageContent instanceof TdApi.MessageChatDeleteMember) {
+            TdApi.MessageChatDeleteMember deleteMember = (TdApi.MessageChatDeleteMember) messageContent;
+            TdApi.User deleteUser = USERS.get(deleteMember.userId);
+            if (deleteUser == null) {
+                LOGGER.info("[operation] user has been removed from the group, group=" + chat.title + ", userid=" + deleteMember.userId);
+            } else {
+                LOGGER.info("[operation] user has been removed from the group, group=" + chat.title + ", userid=" + deleteUser.username + ", username=" + deleteUser.firstName + " " + deleteUser.lastName + ", userPhone=" + deleteUser.phoneNumber);
+            }
+        } else if (messageContent instanceof TdApi.MessageChatChangePhoto) {
+            TdApi.MessageChatChangePhoto changePhoto = (TdApi.MessageChatChangePhoto) messageContent;
+            TdApi.PhotoSize lastPhotoSize = changePhoto.photo.sizes[changePhoto.photo.sizes.length - 1];
+            int localFileId = lastPhotoSize.photo.id;
+            long remoteFileSize = lastPhotoSize.photo.size;
+            String remoteFileId = lastPhotoSize.photo.remote.id;
+            String remoteFileUniqueId = lastPhotoSize.photo.remote.uniqueId;
+            LOGGER.info("[operation] group changed photo, group=" + chat.title + ", size=" + formatFileSize(remoteFileSize) + ", id=" + remoteFileId
+                    + ", uniqueId=" + remoteFileUniqueId);
+            download(localFileId, remoteFileUniqueId);
+        } else if (messageContent instanceof TdApi.MessagePinMessage) {
+            TdApi.MessagePinMessage pinMessage = (TdApi.MessagePinMessage) messageContent;
+            LOGGER.info("[operation] message pinned in group, group=" + chat.title + ", messageId=" + pinMessage.messageId);
+        } else if (messageContent instanceof TdApi.MessagePoll) {
+            TdApi.MessagePoll pollMessage = (TdApi.MessagePoll) messageContent;
+            TdApi.Poll poll = pollMessage.poll;
+            LOGGER.info("[operation] poll update " + poll.toString());
         } else {
             LOGGER.info("[message] [unsupported] " + messageContent.getClass().getSimpleName());
         }
