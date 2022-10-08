@@ -673,9 +673,10 @@ public final class Autolegram {
             return;
         }
         String localPath = file.local.path;
-        String outputPath = telegramDataPath;
         File srcFile = new File(localPath);
-        outputPath = outputPath + "[" + file.remote.uniqueId + "]" + srcFile.getName();
+        String outputPath = getDateSubDirName(srcFile.lastModified());
+        createDir(outputPath);
+        outputPath = outputPath + File.separator + "[" + file.remote.uniqueId + "]" + srcFile.getName();
         try {
             LOGGER.info("[download] [sync] file saved, copy to output dir, localId="
                     + file.id + ", localPath=" + localPath + ", outputPath=" + outputPath);
@@ -922,6 +923,45 @@ public final class Autolegram {
         return uniqueIds;
     }
 
+    private static void reSortExistsOldFiles() {
+        File rootDir = new File(telegramDataPath);
+        File[] files = rootDir.listFiles();
+        if (!rootDir.exists() || files == null) {
+            return;
+        }
+        for (File file : files) {
+            if (file == null || file.isDirectory()) {
+                continue;
+            }
+            String dirName = getDateSubDirName(file.lastModified());
+            try {
+                createDir(dirName);
+                Path dstFile = Paths.get(dirName + File.separator + file.getName());
+                LOGGER.info("move old file " + file.getAbsolutePath() + " to " + dstFile);
+                Files.move(Paths.get(file.getAbsolutePath()), dstFile);
+            } catch (Exception e) {
+                LOGGER.log(Level.SEVERE, "move file failed", e);
+            }
+        }
+    }
+
+    private static String getDateSubDirName(long millions) {
+        SimpleDateFormat sdf = new SimpleDateFormat("MM-dd-yyyy");
+        return telegramDataPath + sdf.format(new Date(millions));
+    }
+
+    private static void createDir(String dir) {
+        try {
+            Path path = Paths.get(dir);
+            if (Files.notExists(path)) {
+                LOGGER.info("create dir " + dir);
+                Files.createDirectories(path);
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "create dir failed", e);
+        }
+    }
+
     private static void findAllFile(String path, List<File> fileList) {
         File rootDir = new File(path);
         File[] files = rootDir.listFiles();
@@ -969,15 +1009,9 @@ public final class Autolegram {
 
     private static boolean appendLine(String line) {
         try {
-            Path dir = Paths.get(new File(uniqueIdFilePath).getParent());
-            if (Files.notExists(dir)) {
-                Files.createDirectories(dir);
-            }
-            Path path = Paths.get(uniqueIdFilePath);
-            if (Files.notExists(path)) {
-                Files.createFile(path);
-            }
-            Files.write(path, (line + "\n").getBytes(), StandardOpenOption.APPEND);
+            createDir(new File(uniqueIdFilePath).getParent());
+            createDir(uniqueIdFilePath);
+            Files.write(Paths.get(uniqueIdFilePath), (line + "\n").getBytes(), StandardOpenOption.APPEND);
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "append file failed", e);
             return false;
@@ -987,10 +1021,7 @@ public final class Autolegram {
 
     private static void rebuildUniqueIdTxt() {
         try {
-            Path dir = Paths.get(new File(uniqueIdFilePath).getParent());
-            if (Files.notExists(dir)) {
-                Files.createDirectories(dir);
-            }
+            createDir(new File(uniqueIdFilePath).getParent());
             Path path = Paths.get(uniqueIdFilePath);
             if (Files.exists(path)) {
                 List<String> uniqueIds = Files.readAllLines(path);
@@ -1045,6 +1076,7 @@ public final class Autolegram {
                 return false;
             }
         }
+        reSortExistsOldFiles();
         UNIQUE_ID_SET.clear();
         UNIQUE_ID_SET.addAll(rebuildUniqueIdList());
         rebuildUniqueIdTxt();
