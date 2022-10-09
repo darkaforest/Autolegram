@@ -17,6 +17,7 @@ import java.security.NoSuchAlgorithmException;
 import java.text.DecimalFormat;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -35,6 +36,7 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.stream.Collectors;
 
 public final class Autolegram {
     private static final Lock AUTHORIZATION_LOCK = new ReentrantLock();
@@ -403,10 +405,11 @@ public final class Autolegram {
         SimpleDateFormat sdf = new SimpleDateFormat("MM-dd-yyyy HH:mm:ss");
         String sd = sdf.format(new Date(time * 1000L));
         TdApi.MessageContent messageContent = message.content;
-        LOGGER.info("[message] " + sd + " " + firstName + " " + lastName
+        LOGGER.info("[message] " + (isAnonymous ? "[anonymous] " : "")  + sd + " " + firstName + " " + lastName
                 + " (" + userName + ") [" + phoneNumber + "] - " + chat.title + ":");
         if (messageContent instanceof TdApi.MessageText) {
-            LOGGER.info("[message] " + (isAnonymous ? "[anonymous] " : "") + messageText.text.text.replace("\n", " ")
+            TdApi.MessageText messageText = (TdApi.MessageText) messageContent;
+            LOGGER.info("[message] " + messageText.text.text.replace("\n", " ")
                     .replace("\t", " ").replace("\r", " "));
         } else if (messageContent instanceof TdApi.MessageVideo) {
             TdApi.MessageVideo messageVideo = (TdApi.MessageVideo) messageContent;
@@ -535,7 +538,10 @@ public final class Autolegram {
         } else if (messageContent instanceof TdApi.MessagePoll) {
             TdApi.MessagePoll pollMessage = (TdApi.MessagePoll) messageContent;
             TdApi.Poll poll = pollMessage.poll;
-            LOGGER.info("[operation] poll update " + poll.toString());
+            LOGGER.info("[operation] poll update, question=" + poll.question
+                    + ((poll.options != null && poll.options.length != 0)
+                    ? ", options=[" + Arrays.stream(poll.options).map(o -> o.text).collect(Collectors.joining(", ")) + "]"
+                    : ""));
         } else {
             LOGGER.info("[message] [unsupported] " + messageContent.getClass().getSimpleName());
         }
