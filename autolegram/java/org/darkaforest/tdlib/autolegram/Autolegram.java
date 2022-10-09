@@ -378,18 +378,35 @@ public final class Autolegram {
 
     private static void onNewMessageUpdated(TdApi.UpdateNewMessage updateNewMessage) {
         TdApi.Message message = updateNewMessage.message;
-        TdApi.MessageSenderUser senderUserId = (TdApi.MessageSenderUser) message.senderId;
-        TdApi.User senderUser = USERS.get(senderUserId.userId);
+        TdApi.MessageSender messageSender = message.senderId;
+        String firstName = "";
+        String lastName = "";
+        String userName = "";
+        String phoneNumber = "";
+        boolean isAnonymous = false;
+        if (messageSender instanceof TdApi.MessageSenderUser) {
+            TdApi.MessageSenderUser messageSenderUser = (TdApi.MessageSenderUser) messageSender;
+            TdApi.User senderUser = USERS.get(messageSenderUser.userId);
+            firstName = senderUser.firstName;
+            lastName = senderUser.lastName;
+            userName = senderUser.username;
+            phoneNumber = senderUser.phoneNumber;
+        }
+        if (messageSender instanceof TdApi.MessageSenderChat) {
+            TdApi.MessageSenderChat messageSenderChat = (TdApi.MessageSenderChat) messageSender;
+            TdApi.Chat chat = CHATS.get(messageSenderChat.chatId);
+            userName = chat.title;
+            isAnonymous = true;
+        }
         TdApi.Chat chat = CHATS.get(message.chatId);
         int time = message.date;
         SimpleDateFormat sdf = new SimpleDateFormat("MM-dd-yyyy HH:mm:ss");
         String sd = sdf.format(new Date(time * 1000L));
         TdApi.MessageContent messageContent = message.content;
-        LOGGER.info("[message] " + sd + " " + senderUser.firstName + " " + senderUser.lastName
-                + " (" + senderUser.username + ") [" + senderUser.phoneNumber + "] - " + chat.title + ":");
+        LOGGER.info("[message] " + sd + " " + firstName + " " + lastName
+                + " (" + userName + ") [" + phoneNumber + "] - " + chat.title + ":");
         if (messageContent instanceof TdApi.MessageText) {
-            TdApi.MessageText messageText = (TdApi.MessageText) messageContent;
-            LOGGER.info("[message] " + messageText.text.text.replace("\n", " ")
+            LOGGER.info("[message] " + (isAnonymous ? "[anonymous] " : "") + messageText.text.text.replace("\n", " ")
                     .replace("\t", " ").replace("\r", " "));
         } else if (messageContent instanceof TdApi.MessageVideo) {
             TdApi.MessageVideo messageVideo = (TdApi.MessageVideo) messageContent;
@@ -478,9 +495,9 @@ public final class Autolegram {
             long customEmojiId = messageAnimatedEmoji.animatedEmoji.sticker.customEmojiId;
             LOGGER.info("[message] [sticker] emoji=" + emoji + ", setId=" + setId + ", customEmojiId=" + customEmojiId);
         } else if (messageContent instanceof TdApi.MessageChatJoinByLink) {
-            LOGGER.info("[operation] user joined the group by link, group=" + chat.title + ", userid=" + senderUser.username + ", username=" + senderUser.firstName + " " + senderUser.lastName + ", userPhone=" + senderUser.phoneNumber);
+            LOGGER.info("[operation] user joined the group by link, group=" + chat.title + ", userid=" + userName + ", username=" + firstName + " " + lastName + ", userPhone=" + phoneNumber);
         } else if (messageContent instanceof TdApi.MessageChatJoinByRequest) {
-            LOGGER.info("[operation] user joined the group by request, group=" + chat.title + ", userid=" + senderUser.username + ", username=" + senderUser.firstName + " " + senderUser.lastName + ", userPhone=" + senderUser.phoneNumber);
+            LOGGER.info("[operation] user joined the group by request, group=" + chat.title + ", userid=" + userName + ", username=" + firstName + " " + lastName + ", userPhone=" + phoneNumber);
         } else if (messageContent instanceof TdApi.MessageChatAddMembers) {
             TdApi.MessageChatAddMembers addMembers = (TdApi.MessageChatAddMembers) messageContent;
             long[] userIds = addMembers.memberUserIds;
