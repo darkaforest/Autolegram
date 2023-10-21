@@ -57,6 +57,10 @@ public final class Autolegram {
 
     private static final String CONFIG_FILE_PATH = "./conf/config.properties";
 
+    private static final TxTQueue queue = new TxTQueue();
+
+    private static final List<String> fileBotPrefix = List.of("vi_", "p_", "au_", "d_", "pk_");
+
     public static final int FILE_SIZE_B = 1024;
 
     public static final int FILE_SIZE_KB = 1048576;
@@ -119,9 +123,21 @@ public final class Autolegram {
 
     private static boolean telegramDataShowDetail;
 
+    private static long telegramChatFilesDriveId;
+
     private static int telegramMaxChatSize;
 
     public static String uniqueIdFilePath;
+
+    private static String txtQueueFilePath;
+
+    private static long currentFilesDriveMessageId = 0;
+
+    private static long lastFilesDriveUpdatedTime = 0;
+
+    private static boolean filesDriveLoopStarted = false;
+
+    private static boolean filesDrivePKReceived = false;
 
     private static class OrderedChat implements Comparable<OrderedChat> {
         final long chatId;
@@ -156,7 +172,11 @@ public final class Autolegram {
         public void onResult(TdApi.Object object) {
             switch (object.getConstructor()) {
                 case TdApi.UpdateNewMessage.CONSTRUCTOR:
-                    onNewMessageUpdated((TdApi.UpdateNewMessage) object);
+                    try {
+                        onNewMessageUpdated((TdApi.UpdateNewMessage) object);
+                    } catch (Throwable e) {
+                        e.printStackTrace();
+                    }
                     break;
                 case TdApi.UpdateFile.CONSTRUCTOR:
                     onFileUpdated((TdApi.UpdateFile) object);
@@ -378,9 +398,92 @@ public final class Autolegram {
         }
     }
 
+    private static void dealFileBotToken(String str) {
+        List<String> tokens = extractFileBotToken(str);
+        if (tokens.isEmpty()) {
+            return;
+        }
+        for (String token : tokens) {
+            queue.offer(token);
+            LOGGER.info("[filebot] [add] offer to queue: " + tokens);
+        }
+    }
+
+    private static void sendMessage(long chatId, String msg) {
+        if (chatId == 0) {
+            return;
+        }
+        LOGGER.info("[message] [sending] [" + chatId + "] " + msg);
+        TdApi.InputMessageContent content = new TdApi.InputMessageText(new TdApi.FormattedText(msg, null), false, true);
+        client.send(new TdApi.SendMessage(chatId, 0, 0, null, null, content), object -> {
+            if (object instanceof TdApi.Error) {
+                LOGGER.info("[message] [sending] failed, chatId=" + chatId + ", msg=" + msg);
+            } else {
+                long messageId = ((TdApi.Message) object).id;
+                LOGGER.info("[message] [sent] messageId=" + messageId);
+                if (chatId == telegramChatFilesDriveId && !"/help".equals(msg)) {
+                    currentFilesDriveMessageId = messageId;
+                }
+            }
+        });
+    }
+
+    private static void onNewFilesDriveBotMessageUpdated(TdApi.Chat chat, long senderId, TdApi.Message message) {
+        if (!filesDriveLoopStarted) {
+            return;
+        }
+        if (chat.id == telegramChatFilesDriveId && senderId == telegramChatFilesDriveId) {
+            lastFilesDriveUpdatedTime = System.currentTimeMillis();
+            TdApi.Message lastMessage = chat.lastMessage;
+            if (lastMessage == null) {
+                return;
+            }
+            if (lastMessage.content instanceof TdApi.MessageText) {
+                String reply = ((TdApi.MessageText) lastMessage.content).text.text;
+                if (!reply.equals("/help") && !reply.equals(queue.peek())) {
+                    LOGGER.info("[message][file bot] received but not equal, ignored");
+                    return;
+                }
+                if (currentFilesDriveMessageId == 0) {
+                    filebotKickStart();
+                    return;
+                }
+                if (message.content instanceof TdApi.MessageText) {
+                    String text = ((TdApi.MessageText) message.content).text.text;
+                    if (text.contains("password") || text.contains("密码")) {
+                        LOGGER.info("[message][file bot] received but need password, ignored");
+                        queue.poll();
+                        currentFilesDriveMessageId = 0;
+                        sendMessage(telegramChatFilesDriveId, "i don't have any password");
+                        filebotKickStart();
+                        return;
+                    }
+                }
+                if (!reply.startsWith("pk_")) {
+                    LOGGER.info("[message][file bot] received single file");
+                    queue.poll();
+                    filebotKickStart();
+                    return;
+                } else {
+                    filesDrivePKReceived = true;
+                }
+                LOGGER.info("[message][file bot] received multi files");
+            }
+            if (message.replyMarkup instanceof TdApi.ReplyMarkupInlineKeyboard) {
+                TdApi.InlineKeyboardButton button = ((TdApi.ReplyMarkupInlineKeyboard)message.replyMarkup).rows[0][0];
+                TdApi.InlineKeyboardButtonTypeCallback buttonType = (TdApi.InlineKeyboardButtonTypeCallback) button.type;
+                filesDrivePKReceived = false;
+                client.send(new TdApi.GetCallbackQueryAnswer(chat.id, message.id, new TdApi.CallbackQueryPayloadData(buttonType.data)), object -> {
+                });
+                LOGGER.info("[message][file bot] load more message sent");
+            }
+        }
+    }
+
     private static void onNewMessageUpdated(TdApi.UpdateNewMessage updateNewMessage) {
         TdApi.Message message = updateNewMessage.message;
         TdApi.MessageSender messageSender = message.senderId;
+        long senderId = 0;
         String firstName = "";
         String lastName = "";
         String userName = "";
@@ -393,12 +496,14 @@ public final class Autolegram {
             lastName = senderUser.lastName;
             userName = senderUser.username;
             phoneNumber = senderUser.phoneNumber;
+            senderId = senderUser.id;
         }
         if (messageSender instanceof TdApi.MessageSenderChat) {
             TdApi.MessageSenderChat messageSenderChat = (TdApi.MessageSenderChat) messageSender;
             TdApi.Chat chat = CHATS.get(messageSenderChat.chatId);
             userName = chat.title;
             isAnonymous = true;
+            senderId = messageSenderChat.chatId;
         }
         TdApi.Chat chat = CHATS.get(message.chatId);
         int time = message.date;
@@ -411,6 +516,7 @@ public final class Autolegram {
             TdApi.MessageText messageText = (TdApi.MessageText) messageContent;
             LOGGER.info("[message] " + messageText.text.text.replace("\n", " ")
                     .replace("\t", " ").replace("\r", " "));
+            dealFileBotToken(messageText.text.text);
         } else if (messageContent instanceof TdApi.MessageVideo) {
             TdApi.MessageVideo messageVideo = (TdApi.MessageVideo) messageContent;
             String caption = messageVideo.caption.text;
@@ -432,6 +538,7 @@ public final class Autolegram {
                     + ", duration=" + formatTime(videoDuration) + ", resolution=" + videoWidth + "x" + videoHeight
                     + ", supportStreaming=" + supportStreaming + ", id=" + remoteFileId + ", uniqueId=" + remoteFileUniqueId);
             download(localFileId, remoteFileUniqueId);
+            dealFileBotToken(caption);
         } else if (messageContent instanceof TdApi.MessagePhoto) {
             TdApi.MessagePhoto messagePhoto = (TdApi.MessagePhoto) messageContent;
             String caption = messagePhoto.caption.text;
@@ -447,6 +554,7 @@ public final class Autolegram {
             LOGGER.info("[message] [photo] size=" + formatFileSize(remoteFileSize) + ", id=" + remoteFileId
                     + ", uniqueId=" + remoteFileUniqueId);
             download(localFileId, remoteFileUniqueId);
+            dealFileBotToken(caption);
         } else if (messageContent instanceof TdApi.MessageAnimation) {
             TdApi.MessageAnimation messageAnimation = (TdApi.MessageAnimation) messageContent;
             String caption = messageAnimation.caption.text;
@@ -467,6 +575,7 @@ public final class Autolegram {
                     + ", duration=" + formatTime(gifDuration) + ", resolution=" + gifWidth + "x" + gifHeight
                     + ", id=" + remoteFileId + ", uniqueId=" + remoteFileUniqueId);
             download(localFileId, remoteFileUniqueId);
+            dealFileBotToken(caption);
         } else if (messageContent instanceof TdApi.MessageDocument) {
             TdApi.MessageDocument messageDocument = (TdApi.MessageDocument) messageContent;
             String caption = messageDocument.caption.text;
@@ -483,6 +592,7 @@ public final class Autolegram {
             LOGGER.info("[message] [file] name=" + fileName + ", size=" + formatFileSize(remoteFileSize)
                     + ", id=" + remoteFileId + ", uniqueId=" + remoteFileUniqueId);
             download(localFileId, remoteFileUniqueId);
+            dealFileBotToken(caption);
         } else if (messageContent instanceof TdApi.MessageSticker) {
             TdApi.MessageSticker messageSticker = (TdApi.MessageSticker) messageContent;
             boolean isPremium = messageSticker.isPremium;
@@ -545,6 +655,21 @@ public final class Autolegram {
         } else {
             LOGGER.info("[message] [unsupported] " + messageContent.getClass().getSimpleName());
         }
+        onNewFilesDriveBotMessageUpdated(chat, senderId, message);
+    }
+
+    private static void filebotKickStart() {
+        currentFilesDriveMessageId = 0;
+        if (queue.isEmpty()) {
+            LOGGER.info("[message] [file bot] queue is empty");
+            return;
+        }
+        String token = queue.peek();
+        if (token.startsWith("pk_")) {
+            filesDrivePKReceived = false;
+        }
+        LOGGER.info("[message] [file bot] start to deal with " + token);
+        sendMessage(telegramChatFilesDriveId, token);
     }
 
     private static void onAuthorizationStateUpdated(TdApi.AuthorizationState authorizationState) {
@@ -1042,6 +1167,30 @@ public final class Autolegram {
         return true;
     }
 
+    private static List<String> extractFileBotToken(String msg) {
+        List<String> list = new ArrayList<>();
+        if (msg == null || msg.isEmpty()) {
+            return list;
+        }
+        String plainMsg = msg.replace("\r\n", " ")
+                .replace("\r", " ")
+                .replace("\n", " ")
+                .replace("\t", " ");
+        String[] segments = plainMsg.split(" ");
+        for (String segment : segments) {
+            if (segment == null || segment.isEmpty()) {
+                continue;
+            }
+            for (String prefix : fileBotPrefix) {
+                if (segment.startsWith(prefix)) {
+                    list.add(segment.trim());
+                    break;
+                }
+            }
+        }
+        return list;
+    }
+
     private static void rebuildUniqueIdTxt() {
         try {
             createDir(new File(uniqueIdFilePath).getParent());
@@ -1193,7 +1342,7 @@ public final class Autolegram {
         LOGGER.info("[init] loading config start");
         try {
             Properties properties = new Properties();
-            properties.load(Files.newInputStream(Paths.get("./conf/config.properties")));
+            properties.load(Files.newInputStream(Paths.get(CONFIG_FILE_PATH)));
             proxyServer = properties.getProperty("proxy.server", "");
             String proxyPortString = properties.getProperty("proxy.port", "0");
             proxyPort = Integer.parseInt(proxyPortString.isEmpty() ? "0" : proxyPortString);
@@ -1217,10 +1366,13 @@ public final class Autolegram {
                 telegramDataPath = telegramDataPath + File.separator;
             }
             uniqueIdFilePath = telegramDataPath + "donotdelete" + File.separator + "uniqueIds.txt";
+            txtQueueFilePath = telegramDataPath + "donotdelete" + File.separator + "queue.txt";
+            queue.init(txtQueueFilePath);
             telegramDataChecksum = Boolean.parseBoolean(properties.getProperty("telegram.data.checksum", "false"));
             telegramDataEnable = Boolean.parseBoolean(properties.getProperty("telegram.data.enable", "true"));
             telegramDataShowDetail = Boolean.parseBoolean(properties.getProperty("telegram.data.showdetail", "false"));
             telegramMaxChatSize = Integer.parseInt(properties.getProperty("telegram.data.maxchatsize", "9999"));
+            telegramChatFilesDriveId = Long.parseLong(properties.getProperty("telegram.chat.filesdrive.id", "0"));
         } catch (IOException e) {
             LOGGER.log(Level.SEVERE, "[init] loading config file failed", e);
         }
@@ -1259,5 +1411,43 @@ public final class Autolegram {
         createClient();
         setUpProxyServer();
         startMsgLoop();
+        startFilesDriveBotLoop();
+    }
+
+    private static void startFilesDriveBotLoop() {
+        new Thread(() -> {
+            try {
+                Thread.sleep(1000 * 10);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+            filesDriveLoopStarted = true;
+            sendMessage(telegramChatFilesDriveId, "/help");
+            lastFilesDriveUpdatedTime = System.currentTimeMillis();
+            while (true) {
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+                if (System.currentTimeMillis() - lastFilesDriveUpdatedTime > 1000 * 60 * 3 + (int) (1000 * 60 * 2 * Math.random())) {
+                    currentFilesDriveMessageId = 0;
+                    if (!queue.isEmpty()) {
+                        String token = queue.peek();
+                        if (token.startsWith("pk")) {
+                            if (filesDrivePKReceived) {
+                                queue.poll();
+                            } else {
+                                queue.offer(queue.poll());
+                            }
+                        } else {
+                            queue.offer(queue.poll());
+                        }
+                    }
+                    sendMessage(telegramChatFilesDriveId, "/help");
+                    lastFilesDriveUpdatedTime = System.currentTimeMillis();
+                }
+            }
+        }).start();
     }
 }
