@@ -63,6 +63,10 @@ public final class TxTQueue {
         return innerQueue.isEmpty();
     }
 
+    public int size() {
+        return innerQueue.size();
+    }
+
     private static void createDir(String dir) {
         try {
             Path path = Paths.get(dir);

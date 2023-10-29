@@ -131,13 +131,9 @@ public final class Autolegram {
 
     private static String txtQueueFilePath;
 
-    private static long currentFilesDriveMessageId = 0;
-
     private static long lastFilesDriveUpdatedTime = 0;
 
     private static boolean filesDriveLoopStarted = false;
-
-    private static boolean filesDrivePKReceived = false;
 
     private static class OrderedChat implements Comparable<OrderedChat> {
         final long chatId;
@@ -405,7 +401,7 @@ public final class Autolegram {
         }
         for (String token : tokens) {
             queue.offer(token);
-            LOGGER.info("[filebot] [add] offer to queue: " + tokens);
+            LOGGER.info("[filebot] [add] offer to queue: " + tokens + " ,current size: " + queue.size());
         }
     }
 
@@ -421,9 +417,6 @@ public final class Autolegram {
             } else {
                 long messageId = ((TdApi.Message) object).id;
                 LOGGER.info("[message] [sent] messageId=" + messageId);
-                if (chatId == telegramChatFilesDriveId && !"/help".equals(msg)) {
-                    currentFilesDriveMessageId = messageId;
-                }
             }
         });
     }
@@ -438,14 +431,24 @@ public final class Autolegram {
             if (lastMessage == null) {
                 return;
             }
+            if (message.replyMarkup instanceof TdApi.ReplyMarkupInlineKeyboard) {
+                TdApi.InlineKeyboardButton button = ((TdApi.ReplyMarkupInlineKeyboard)message.replyMarkup).rows[0][0];
+                if (button.text == null) {
+                    return;
+                }
+                if (!button.text.trim().equalsIgnoreCase("load more") && !button.text.trim().equalsIgnoreCase("加载更多")) {
+                    return;
+                }
+                TdApi.InlineKeyboardButtonTypeCallback buttonType = (TdApi.InlineKeyboardButtonTypeCallback) button.type;
+                client.send(new TdApi.GetCallbackQueryAnswer(chat.id, message.id, new TdApi.CallbackQueryPayloadData(buttonType.data)), object -> {
+                });
+                LOGGER.info("[message][file bot] load more message sent");
+                return;
+            }
             if (lastMessage.content instanceof TdApi.MessageText) {
                 String reply = ((TdApi.MessageText) lastMessage.content).text.text;
                 if (!reply.equals("/help") && !reply.equals(queue.peek())) {
                     LOGGER.info("[message][file bot] received but not equal, ignored");
-                    return;
-                }
-                if (currentFilesDriveMessageId == 0) {
-                    filebotKickStart();
                     return;
                 }
                 if (message.content instanceof TdApi.MessageText) {
@@ -453,29 +456,18 @@ public final class Autolegram {
                     if (text.contains("password") || text.contains("密码")) {
                         LOGGER.info("[message][file bot] received but need password, ignored");
                         queue.poll();
-                        currentFilesDriveMessageId = 0;
                         sendMessage(telegramChatFilesDriveId, "i don't have any password");
                         filebotKickStart();
                         return;
                     }
                 }
-                if (!reply.startsWith("pk_")) {
-                    LOGGER.info("[message][file bot] received single file");
-                    queue.poll();
-                    filebotKickStart();
+                if (reply.startsWith("pk_")) {
+                    LOGGER.info("[message][file bot] received pk reply, ignored");
                     return;
-                } else {
-                    filesDrivePKReceived = true;
                 }
-                LOGGER.info("[message][file bot] received multi files");
-            }
-            if (message.replyMarkup instanceof TdApi.ReplyMarkupInlineKeyboard) {
-                TdApi.InlineKeyboardButton button = ((TdApi.ReplyMarkupInlineKeyboard)message.replyMarkup).rows[0][0];
-                TdApi.InlineKeyboardButtonTypeCallback buttonType = (TdApi.InlineKeyboardButtonTypeCallback) button.type;
-                filesDrivePKReceived = false;
-                client.send(new TdApi.GetCallbackQueryAnswer(chat.id, message.id, new TdApi.CallbackQueryPayloadData(buttonType.data)), object -> {
-                });
-                LOGGER.info("[message][file bot] load more message sent");
+                LOGGER.info("[message][file bot] received single file");
+                queue.poll();
+                filebotKickStart();
             }
         }
     }
@@ -659,15 +651,11 @@ public final class Autolegram {
     }
 
     private static void filebotKickStart() {
-        currentFilesDriveMessageId = 0;
         if (queue.isEmpty()) {
             LOGGER.info("[message] [file bot] queue is empty");
             return;
         }
         String token = queue.peek();
-        if (token.startsWith("pk_")) {
-            filesDrivePKReceived = false;
-        }
         LOGGER.info("[message] [file bot] start to deal with " + token);
         sendMessage(telegramChatFilesDriveId, token);
     }
@@ -1422,7 +1410,7 @@ public final class Autolegram {
                 throw new RuntimeException(e);
             }
             filesDriveLoopStarted = true;
-            sendMessage(telegramChatFilesDriveId, "/help");
+            filebotKickStart();
             lastFilesDriveUpdatedTime = System.currentTimeMillis();
             while (true) {
                 try {
@@ -1430,21 +1418,16 @@ public final class Autolegram {
                 } catch (InterruptedException e) {
                     throw new RuntimeException(e);
                 }
-                if (System.currentTimeMillis() - lastFilesDriveUpdatedTime > 1000 * 60 * 3 + (int) (1000 * 60 * 2 * Math.random())) {
-                    currentFilesDriveMessageId = 0;
+                if (System.currentTimeMillis() - lastFilesDriveUpdatedTime > 1000 * 60 * 2 + (int) (1000 * 60 * Math.random())) {
                     if (!queue.isEmpty()) {
                         String token = queue.peek();
-                        if (token.startsWith("pk")) {
-                            if (filesDrivePKReceived) {
-                                queue.poll();
-                            } else {
-                                queue.offer(queue.poll());
-                            }
+                        if (token.startsWith("pk_")) {
+                            queue.poll();
                         } else {
                             queue.offer(queue.poll());
                         }
                     }
-                    sendMessage(telegramChatFilesDriveId, "/help");
+                    filebotKickStart();
                     lastFilesDriveUpdatedTime = System.currentTimeMillis();
                 }
             }
