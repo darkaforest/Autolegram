@@ -135,6 +135,8 @@ public final class Autolegram {
 
     private static boolean filesDriveLoopStarted = false;
 
+    private static Map<String, Integer> retryMap = new HashMap<>();
+
     private static class OrderedChat implements Comparable<OrderedChat> {
         final long chatId;
 
@@ -395,13 +397,16 @@ public final class Autolegram {
     }
 
     private static void dealFileBotToken(String str) {
+        if (!filesDriveLoopStarted) {
+            return;
+        }
         List<String> tokens = extractFileBotToken(str);
         if (tokens.isEmpty()) {
             return;
         }
         for (String token : tokens) {
             queue.offer(token);
-            LOGGER.info("[filebot] [add] offer to queue: " + tokens + " ,current size: " + queue.size());
+            LOGGER.info("[filebot] [add] offer to queue: " + token + " ,current size: " + queue.size());
         }
     }
 
@@ -1421,9 +1426,15 @@ public final class Autolegram {
                 if (System.currentTimeMillis() - lastFilesDriveUpdatedTime > 1000 * 60 * 2 + (int) (1000 * 60 * Math.random())) {
                     if (!queue.isEmpty()) {
                         String token = queue.peek();
+                        if (retryMap.getOrDefault(token, 0) > 10) {
+                            LOGGER.info("[file bot] evict failed token after retries: " + token);
+                            queue.poll();
+                            retryMap.remove(token);
+                        }
                         if (token.startsWith("pk_")) {
                             queue.poll();
                         } else {
+                            retryMap.put(token, retryMap.getOrDefault(token, 0) + 1);
                             queue.offer(queue.poll());
                         }
                     }
