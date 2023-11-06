@@ -1408,40 +1408,45 @@ public final class Autolegram {
     }
 
     private static void startFilesDriveBotLoop() {
-        new Thread(() -> {
-            try {
-                Thread.sleep(1000 * 10);
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
-            }
-            filesDriveLoopStarted = true;
-            filebotKickStart();
-            lastFilesDriveUpdatedTime = System.currentTimeMillis();
-            while (true) {
+        try{
+            new Thread(() -> {
                 try {
-                    Thread.sleep(1000);
+                    Thread.sleep(1000 * 10);
                 } catch (InterruptedException e) {
                     throw new RuntimeException(e);
                 }
-                if (System.currentTimeMillis() - lastFilesDriveUpdatedTime > 1000 * 60 * 2 + (int) (1000 * 60 * Math.random())) {
-                    if (!queue.isEmpty()) {
-                        String token = queue.peek();
-                        if (retryMap.getOrDefault(token, 0) > 10) {
-                            LOGGER.info("[file bot] evict failed token after retries: " + token);
-                            queue.poll();
-                            retryMap.remove(token);
-                        }
-                        if (token.startsWith("pk_")) {
-                            queue.poll();
-                        } else {
-                            retryMap.put(token, retryMap.getOrDefault(token, 0) + 1);
-                            queue.offer(queue.poll());
-                        }
+                filesDriveLoopStarted = true;
+                filebotKickStart();
+                lastFilesDriveUpdatedTime = System.currentTimeMillis();
+                while (true) {
+                    try {
+                        Thread.sleep(1000);
+                    } catch (InterruptedException e) {
+                        throw new RuntimeException(e);
                     }
-                    filebotKickStart();
-                    lastFilesDriveUpdatedTime = System.currentTimeMillis();
+                    if (System.currentTimeMillis() - lastFilesDriveUpdatedTime > 1000 * 60 * 2 + (int) (1000 * 60 * Math.random())) {
+                        if (!queue.isEmpty()) {
+                            String token = queue.peek();
+                            if (retryMap.getOrDefault(token, 0) > 10) {
+                                LOGGER.info("[file bot] evict failed token after retries: " + token);
+                                queue.poll();
+                                retryMap.remove(token);
+                                continue;
+                            }
+                            if (token.startsWith("pk_")) {
+                                queue.poll();
+                            } else {
+                                retryMap.put(token, retryMap.getOrDefault(token, 0) + 1);
+                                queue.offer(queue.poll());
+                            }
+                        }
+                        filebotKickStart();
+                        lastFilesDriveUpdatedTime = System.currentTimeMillis();
+                    }
                 }
-            }
-        }).start();
+            }).start();
+        } catch (Throwable e) {
+            e.printStackTrace();
+        }
     }
 }
