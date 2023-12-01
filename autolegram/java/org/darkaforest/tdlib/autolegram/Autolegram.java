@@ -1434,7 +1434,7 @@ public final class Autolegram {
                                 continue;
                             }
                             if (token.startsWith("pk_")) {
-                                queue.poll();
+                                retryMap.put(token, Integer.MAX_VALUE);
                             } else {
                                 retryMap.put(token, retryMap.getOrDefault(token, 0) + 1);
                                 queue.offer(queue.poll());
