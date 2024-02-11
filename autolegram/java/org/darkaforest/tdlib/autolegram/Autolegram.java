@@ -1411,7 +1411,9 @@ public final class Autolegram {
         try{
             new Thread(() -> {
                 try {
-                    Thread.sleep(1000 * 10);
+                    LOGGER.info("[file bot] delay start");
+                    Thread.sleep(1000 * 60);
+                    LOGGER.info("[file bot] delay end");
                 } catch (InterruptedException e) {
                     throw new RuntimeException(e);
                 }
