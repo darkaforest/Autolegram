@@ -53,6 +53,8 @@ public final class Autolegram {
 
     private static final Set<String> UNIQUE_ID_SET = new HashSet<>();
 
+    private static final Set<String> UNIQUE_FILE_BOT_TOKEN_SET = new HashSet<>();
+
     private static final Map<Integer, Boolean> LOCAL_FILE_ACTIVE_MAP = new HashMap<>();
 
     private static final String CONFIG_FILE_PATH = "./conf/config.properties";
@@ -128,6 +130,8 @@ public final class Autolegram {
     private static int telegramMaxChatSize;
 
     public static String uniqueIdFilePath;
+
+    public static String uniqueFileBotTokenFilePath;
 
     private static String txtQueueFilePath;
 
@@ -405,8 +409,14 @@ public final class Autolegram {
             return;
         }
         for (String token : tokens) {
-            queue.offer(token);
             LOGGER.info("[filebot] [add] offer to queue: " + token + " ,current size: " + queue.size());
+            if (UNIQUE_FILE_BOT_TOKEN_SET.contains(token)) {
+                LOGGER.info("[filebot] [add] token duplicated, skip");
+                continue;
+            }
+            UNIQUE_FILE_BOT_TOKEN_SET.add(token);
+            appendUniqueFileTokenId(token);
+            queue.offer(token);
         }
     }
 
@@ -837,13 +847,12 @@ public final class Autolegram {
             UNIQUE_ID_SET.remove(file.remote.uniqueId);
             return;
         }
-        String idPath = telegramDataPath + "donotdelete" + File.separator + "uniqueIds.txt";
         String uniqueId = file.remote.uniqueId;
         if (!telegramDataChecksum) {
             LOGGER.info("[download] [sync] checksum has been disabled");
             LOGGER.info("[download] [sync] download succeed, filename=" + outFile.getName());
             LOGGER.info("[download] [sync] save uniqueId to file for deduplication");
-            if(appendLine(uniqueId)) {
+            if(appendUniqueFileId(uniqueId)) {
                 UNIQUE_ID_SET.add(uniqueId);
                 LOGGER.info("[download] [sync] uniqueId saved, value=" + uniqueId);
             } else {
@@ -875,7 +884,7 @@ public final class Autolegram {
             } else {
                 LOGGER.info("[download] [sync] src file delete failed");
             }
-            if(appendLine(uniqueId)) {
+            if(appendUniqueFileId(uniqueId)) {
                 UNIQUE_ID_SET.add(uniqueId);
                 LOGGER.info("[download] [sync] uniqueId saved, value=" + uniqueId);
             } else {
@@ -1148,11 +1157,23 @@ public final class Autolegram {
         return sb.toString();
     }
 
-    private static boolean appendLine(String line) {
+    private static boolean appendUniqueFileId(String line) {
         try {
             createDir(new File(uniqueIdFilePath).getParent());
             createDir(uniqueIdFilePath);
             Files.write(Paths.get(uniqueIdFilePath), (line + "\n").getBytes(), StandardOpenOption.APPEND);
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "append file failed", e);
+            return false;
+        }
+        return true;
+    }
+
+    private static boolean appendUniqueFileTokenId(String line) {
+        try {
+            createDir(new File(uniqueFileBotTokenFilePath).getParent());
+            createDir(uniqueFileBotTokenFilePath);
+            Files.write(Paths.get(uniqueFileBotTokenFilePath), (line + "\n").getBytes(), StandardOpenOption.APPEND);
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "append file failed", e);
             return false;
@@ -1208,6 +1229,21 @@ public final class Autolegram {
         }
     }
 
+    private static void rebuildUniqueFileTokenTxt() {
+        try {
+            createDir(new File(uniqueFileBotTokenFilePath).getParent());
+            Path path = Paths.get(uniqueFileBotTokenFilePath);
+            if (Files.exists(path)) {
+                List<String> uniqueFileBotTokens = Files.readAllLines(path);
+                if (!uniqueFileBotTokens.isEmpty()) {
+                    UNIQUE_FILE_BOT_TOKEN_SET.addAll(uniqueFileBotTokens);
+                }
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "rebuild uniqueFileBotTokens.txt failed", e);
+        }
+    }
+
     private static void download(int localFileId, String uniqueId) {
         if (!telegramDataEnable) {
             return;
@@ -1242,9 +1278,11 @@ public final class Autolegram {
             }
         }
         reSortExistsOldFiles();
+        UNIQUE_FILE_BOT_TOKEN_SET.clear();
         UNIQUE_ID_SET.clear();
         UNIQUE_ID_SET.addAll(rebuildUniqueIdList());
         rebuildUniqueIdTxt();
+        rebuildUniqueFileTokenTxt();
         return true;
     }
 
@@ -1359,6 +1397,7 @@ public final class Autolegram {
                 telegramDataPath = telegramDataPath + File.separator;
             }
             uniqueIdFilePath = telegramDataPath + "donotdelete" + File.separator + "uniqueIds.txt";
+            uniqueFileBotTokenFilePath = telegramDataPath + "donotdelete" + File.separator + "uniqueFileBotTokens.txt";
             txtQueueFilePath = telegramDataPath + "donotdelete" + File.separator + "queue.txt";
             queue.init(txtQueueFilePath);
             telegramDataChecksum = Boolean.parseBoolean(properties.getProperty("telegram.data.checksum", "false"));
