@@ -61,7 +61,7 @@ public final class Autolegram {
 
     private static final TxTQueue queue = new TxTQueue();
 
-    private static final List<String> fileBotPrefix = List.of("vi_", "v_", "p_", "au_", "d_", "pk_");
+    private static final List<String> fileBotPrefix = List.of("vi_", "v_", "p_", "au_", "d_", "pk_", "VI_", "V_", "P_", "AU_", "D_", "PK_");
 
     public static final int FILE_SIZE_B = 1024;
 
