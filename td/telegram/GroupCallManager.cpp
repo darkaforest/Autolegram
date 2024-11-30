@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -8,9 +8,12 @@
 
 #include "td/telegram/AccessRights.h"
 #include "td/telegram/AuthManager.h"
-#include "td/telegram/ContactsManager.h"
+#include "td/telegram/ChatManager.h"
 #include "td/telegram/DialogAction.h"
+#include "td/telegram/DialogActionManager.h"
+#include "td/telegram/DialogManager.h"
 #include "td/telegram/DialogParticipantFilter.h"
+#include "td/telegram/DialogParticipantManager.h"
 #include "td/telegram/Global.h"
 #include "td/telegram/MessageId.h"
 #include "td/telegram/MessageSender.h"
@@ -19,7 +22,9 @@
 #include "td/telegram/net/DcId.h"
 #include "td/telegram/net/NetQuery.h"
 #include "td/telegram/Td.h"
+#include "td/telegram/telegram_api.h"
 #include "td/telegram/UpdatesManager.h"
+#include "td/telegram/UserManager.h"
 
 #include "td/utils/algorithm.h"
 #include "td/utils/buffer.h"
@@ -122,7 +127,7 @@ class GetGroupCallJoinAsQuery final : public Td::ResultHandler {
   void send(DialogId dialog_id) {
     dialog_id_ = dialog_id;
 
-    auto input_peer = td_->messages_manager_->get_input_peer(dialog_id, AccessRights::Read);
+    auto input_peer = td_->dialog_manager_->get_input_peer(dialog_id, AccessRights::Read);
     CHECK(input_peer != nullptr);
 
     send_query(G()->net_query_creator().create(telegram_api::phone_getGroupCallJoinAs(std::move(input_peer))));
@@ -137,14 +142,14 @@ class GetGroupCallJoinAsQuery final : public Td::ResultHandler {
     auto ptr = result_ptr.move_as_ok();
     LOG(INFO) << "Receive result for GetGroupCallJoinAsQuery: " << to_string(ptr);
 
-    td_->contacts_manager_->on_get_users(std::move(ptr->users_), "GetGroupCallJoinAsQuery");
-    td_->contacts_manager_->on_get_chats(std::move(ptr->chats_), "GetGroupCallJoinAsQuery");
+    td_->user_manager_->on_get_users(std::move(ptr->users_), "GetGroupCallJoinAsQuery");
+    td_->chat_manager_->on_get_chats(std::move(ptr->chats_), "GetGroupCallJoinAsQuery");
 
     promise_.set_value(convert_message_senders_object(td_, ptr->peers_));
   }
 
   void on_error(Status status) final {
-    td_->messages_manager_->on_get_dialog_error(dialog_id_, status, "GetGroupCallJoinAsQuery");
+    td_->dialog_manager_->on_get_dialog_error(dialog_id_, status, "GetGroupCallJoinAsQuery");
     promise_.set_error(std::move(status));
   }
 };
@@ -157,10 +162,10 @@ class SaveDefaultGroupCallJoinAsQuery final : public Td::ResultHandler {
   }
 
   void send(DialogId dialog_id, DialogId as_dialog_id) {
-    auto input_peer = td_->messages_manager_->get_input_peer(dialog_id, AccessRights::Read);
+    auto input_peer = td_->dialog_manager_->get_input_peer(dialog_id, AccessRights::Read);
     CHECK(input_peer != nullptr);
 
-    auto as_input_peer = td_->messages_manager_->get_input_peer(as_dialog_id, AccessRights::Read);
+    auto as_input_peer = td_->dialog_manager_->get_input_peer(as_dialog_id, AccessRights::Read);
     CHECK(as_input_peer != nullptr);
 
     send_query(G()->net_query_creator().create(
@@ -180,7 +185,7 @@ class SaveDefaultGroupCallJoinAsQuery final : public Td::ResultHandler {
   }
 
   void on_error(Status status) final {
-    // td_->messages_manager_->on_get_dialog_error(dialog_id_, status, "GetGroupCallJoinAsQuery");
+    // td_->dialog_manager_->on_get_dialog_error(dialog_id_, status, "GetGroupCallJoinAsQuery");
     promise_.set_error(std::move(status));
   }
 };
@@ -196,7 +201,7 @@ class CreateGroupCallQuery final : public Td::ResultHandler {
   void send(DialogId dialog_id, const string &title, int32 start_date, bool is_rtmp_stream) {
     dialog_id_ = dialog_id;
 
-    auto input_peer = td_->messages_manager_->get_input_peer(dialog_id, AccessRights::Read);
+    auto input_peer = td_->dialog_manager_->get_input_peer(dialog_id, AccessRights::Read);
     CHECK(input_peer != nullptr);
 
     int32 flags = 0;
@@ -242,7 +247,7 @@ class CreateGroupCallQuery final : public Td::ResultHandler {
   }
 
   void on_error(Status status) final {
-    td_->messages_manager_->on_get_dialog_error(dialog_id_, status, "CreateGroupCallQuery");
+    td_->dialog_manager_->on_get_dialog_error(dialog_id_, status, "CreateGroupCallQuery");
     promise_.set_error(std::move(status));
   }
 };
@@ -259,7 +264,7 @@ class GetGroupCallRtmpStreamUrlGroupCallQuery final : public Td::ResultHandler {
   void send(DialogId dialog_id, bool revoke) {
     dialog_id_ = dialog_id;
 
-    auto input_peer = td_->messages_manager_->get_input_peer(dialog_id, AccessRights::Read);
+    auto input_peer = td_->dialog_manager_->get_input_peer(dialog_id, AccessRights::Read);
     CHECK(input_peer != nullptr);
 
     send_query(
@@ -277,7 +282,7 @@ class GetGroupCallRtmpStreamUrlGroupCallQuery final : public Td::ResultHandler {
   }
 
   void on_error(Status status) final {
-    td_->messages_manager_->on_get_dialog_error(dialog_id_, status, "GetGroupCallRtmpStreamUrlGroupCallQuery");
+    td_->dialog_manager_->on_get_dialog_error(dialog_id_, status, "GetGroupCallRtmpStreamUrlGroupCallQuery");
     promise_.set_error(std::move(status));
   }
 };
@@ -429,7 +434,7 @@ class JoinGroupCallQuery final : public Td::ResultHandler {
 
     tl_object_ptr<telegram_api::InputPeer> join_as_input_peer;
     if (as_dialog_id.is_valid()) {
-      join_as_input_peer = td_->messages_manager_->get_input_peer(as_dialog_id, AccessRights::Read);
+      join_as_input_peer = td_->dialog_manager_->get_input_peer(as_dialog_id, AccessRights::Read);
     } else {
       join_as_input_peer = make_tl_object<telegram_api::inputPeerSelf>();
     }
@@ -747,7 +752,7 @@ class EditGroupCallParticipantQuery final : public Td::ResultHandler {
             int32 volume_level, bool set_raise_hand, bool raise_hand, bool set_video_is_stopped, bool video_is_stopped,
             bool set_video_is_paused, bool video_is_paused, bool set_presentation_is_paused,
             bool presentation_is_paused) {
-    auto input_peer = td_->messages_manager_->get_input_peer(dialog_id, AccessRights::Know);
+    auto input_peer = td_->dialog_manager_->get_input_peer(dialog_id, AccessRights::Know);
     if (input_peer == nullptr) {
       return on_error(Status::Error(400, "Can't access the chat"));
     }
@@ -889,6 +894,7 @@ struct GroupCallManager::GroupCall {
   bool is_rtmp_stream = false;
   bool is_joined = false;
   bool need_rejoin = false;
+  bool is_being_joined = false;
   bool is_being_left = false;
   bool is_speaking = false;
   bool can_self_unmute = false;
@@ -1025,7 +1031,8 @@ void GroupCallManager::on_update_group_call_participant_order_timeout(GroupCallI
   }
 
   bool can_self_unmute = get_group_call_can_self_unmute(input_group_call_id);
-  auto *participants = add_group_call_participants(input_group_call_id);
+  auto *participants =
+      add_group_call_participants(input_group_call_id, "on_update_group_call_participant_order_timeout");
   update_group_call_participants_order(input_group_call_id, can_self_unmute, participants,
                                        "on_update_group_call_participant_order_timeout");
 }
@@ -1053,7 +1060,7 @@ void GroupCallManager::on_check_group_call_is_joined_timeout(GroupCallId group_c
   auto *group_call = get_group_call(input_group_call_id);
   CHECK(group_call != nullptr && group_call->is_inited);
   auto audio_source = group_call->audio_source;
-  if (!group_call->is_joined || is_group_call_being_joined(input_group_call_id) ||
+  if (!group_call->is_joined || group_call->is_being_joined ||
       check_group_call_is_joined_timeout_.has_timeout(group_call_id.get()) || audio_source == 0) {
     return;
   }
@@ -1093,12 +1100,12 @@ void GroupCallManager::on_send_speaking_action_timeout(GroupCallId group_call_id
   }
 
   CHECK(group_call->as_dialog_id.is_valid());
-  on_user_speaking_in_group_call(group_call_id, group_call->as_dialog_id, G()->unix_time());
+  on_user_speaking_in_group_call(group_call_id, group_call->as_dialog_id, false, G()->unix_time());
 
   pending_send_speaking_action_timeout_.add_timeout_in(group_call_id.get(), 4.0);
 
-  td_->messages_manager_->send_dialog_action(group_call->dialog_id, MessageId(), DialogAction::get_speaking_action(),
-                                             Promise<Unit>());
+  td_->dialog_action_manager_->send_dialog_action(group_call->dialog_id, MessageId(), {},
+                                                  DialogAction::get_speaking_action(), Promise<Unit>());
 }
 
 void GroupCallManager::on_recent_speaker_update_timeout_callback(void *group_call_manager_ptr,
@@ -1217,18 +1224,35 @@ GroupCallManager::GroupCall *GroupCallManager::get_group_call(InputGroupCallId i
   }
 }
 
+Status GroupCallManager::can_join_group_calls(DialogId dialog_id) const {
+  TRY_STATUS(td_->dialog_manager_->check_dialog_access(dialog_id, false, AccessRights::Read, "can_join_group_calls"));
+  switch (dialog_id.get_type()) {
+    case DialogType::Chat:
+    case DialogType::Channel:
+      break;
+    case DialogType::User:
+      return Status::Error(400, "Chat can't have a voice chat");
+    case DialogType::SecretChat:
+    case DialogType::None:
+    default:
+      UNREACHABLE();
+      break;
+  }
+  return Status::OK();
+}
+
 Status GroupCallManager::can_manage_group_calls(DialogId dialog_id) const {
   switch (dialog_id.get_type()) {
     case DialogType::Chat: {
       auto chat_id = dialog_id.get_chat_id();
-      if (!td_->contacts_manager_->get_chat_permissions(chat_id).can_manage_calls()) {
+      if (!td_->chat_manager_->get_chat_permissions(chat_id).can_manage_calls()) {
         return Status::Error(400, "Not enough rights in the chat");
       }
       break;
     }
     case DialogType::Channel: {
       auto channel_id = dialog_id.get_channel_id();
-      if (!td_->contacts_manager_->get_channel_permissions(channel_id).can_manage_calls()) {
+      if (!td_->chat_manager_->get_channel_permissions(channel_id).can_manage_calls()) {
         return Status::Error(400, "Not enough rights in the chat");
       }
       break;
@@ -1267,40 +1291,24 @@ bool GroupCallManager::get_group_call_joined_date_asc(InputGroupCallId input_gro
 
 void GroupCallManager::get_group_call_join_as(DialogId dialog_id,
                                               Promise<td_api::object_ptr<td_api::messageSenders>> &&promise) {
-  if (!dialog_id.is_valid()) {
-    return promise.set_error(Status::Error(400, "Invalid chat identifier specified"));
-  }
-  if (!td_->messages_manager_->have_dialog_force(dialog_id, "get_group_call_join_as")) {
-    return promise.set_error(Status::Error(400, "Chat not found"));
-  }
-  if (!td_->messages_manager_->have_input_peer(dialog_id, AccessRights::Read)) {
-    return promise.set_error(Status::Error(400, "Can't access chat"));
-  }
+  TRY_STATUS_PROMISE(promise, can_join_group_calls(dialog_id));
 
   td_->create_handler<GetGroupCallJoinAsQuery>(std::move(promise))->send(dialog_id);
 }
 
 void GroupCallManager::set_group_call_default_join_as(DialogId dialog_id, DialogId as_dialog_id,
                                                       Promise<Unit> &&promise) {
-  if (!dialog_id.is_valid()) {
-    return promise.set_error(Status::Error(400, "Invalid chat identifier specified"));
-  }
-  if (!td_->messages_manager_->have_dialog_force(dialog_id, "set_group_call_default_join_as")) {
-    return promise.set_error(Status::Error(400, "Chat not found"));
-  }
-  if (!td_->messages_manager_->have_input_peer(dialog_id, AccessRights::Read)) {
-    return promise.set_error(Status::Error(400, "Can't access chat"));
-  }
+  TRY_STATUS_PROMISE(promise, can_join_group_calls(dialog_id));
 
   switch (as_dialog_id.get_type()) {
     case DialogType::User:
-      if (as_dialog_id != DialogId(td_->contacts_manager_->get_my_id())) {
+      if (as_dialog_id != td_->dialog_manager_->get_my_dialog_id()) {
         return promise.set_error(Status::Error(400, "Can't join voice chat as another user"));
       }
       break;
     case DialogType::Chat:
     case DialogType::Channel:
-      if (!td_->messages_manager_->have_dialog_force(as_dialog_id, "set_group_call_default_join_as 2")) {
+      if (!td_->dialog_manager_->have_dialog_force(as_dialog_id, "set_group_call_default_join_as 2")) {
         return promise.set_error(Status::Error(400, "Participant chat not found"));
       }
       break;
@@ -1309,7 +1317,7 @@ void GroupCallManager::set_group_call_default_join_as(DialogId dialog_id, Dialog
     default:
       return promise.set_error(Status::Error(400, "Invalid default participant identifier specified"));
   }
-  if (!td_->messages_manager_->have_input_peer(as_dialog_id, AccessRights::Read)) {
+  if (!td_->dialog_manager_->have_input_peer(as_dialog_id, false, AccessRights::Read)) {
     return promise.set_error(Status::Error(400, "Can't access specified default participant chat"));
   }
 
@@ -1319,16 +1327,8 @@ void GroupCallManager::set_group_call_default_join_as(DialogId dialog_id, Dialog
 
 void GroupCallManager::create_voice_chat(DialogId dialog_id, string title, int32 start_date, bool is_rtmp_stream,
                                          Promise<GroupCallId> &&promise) {
-  if (!dialog_id.is_valid()) {
-    return promise.set_error(Status::Error(400, "Invalid chat identifier specified"));
-  }
-  if (!td_->messages_manager_->have_dialog_force(dialog_id, "create_voice_chat")) {
-    return promise.set_error(Status::Error(400, "Chat not found"));
-  }
-  if (!td_->messages_manager_->have_input_peer(dialog_id, AccessRights::Read)) {
-    return promise.set_error(Status::Error(400, "Can't access chat"));
-  }
-
+  TRY_STATUS_PROMISE(
+      promise, td_->dialog_manager_->check_dialog_access(dialog_id, false, AccessRights::Read, "create_voice_chat"));
   TRY_STATUS_PROMISE(promise, can_manage_group_calls(dialog_id));
 
   title = clean_name(title, MAX_TITLE_LENGTH);
@@ -1348,16 +1348,8 @@ void GroupCallManager::create_voice_chat(DialogId dialog_id, string title, int32
 
 void GroupCallManager::get_voice_chat_rtmp_stream_url(DialogId dialog_id, bool revoke,
                                                       Promise<td_api::object_ptr<td_api::rtmpUrl>> &&promise) {
-  if (!dialog_id.is_valid()) {
-    return promise.set_error(Status::Error(400, "Invalid chat identifier specified"));
-  }
-  if (!td_->messages_manager_->have_dialog_force(dialog_id, "get_voice_chat_rtmp_stream_url")) {
-    return promise.set_error(Status::Error(400, "Chat not found"));
-  }
-  if (!td_->messages_manager_->have_input_peer(dialog_id, AccessRights::Read)) {
-    return promise.set_error(Status::Error(400, "Can't access chat"));
-  }
-
+  TRY_STATUS_PROMISE(promise, td_->dialog_manager_->check_dialog_access(dialog_id, false, AccessRights::Read,
+                                                                        "get_voice_chat_rtmp_stream_url"));
   TRY_STATUS_PROMISE(promise, can_manage_group_calls(dialog_id));
 
   td_->create_handler<GetGroupCallRtmpStreamUrlGroupCallQuery>(std::move(promise))->send(dialog_id, revoke);
@@ -1394,11 +1386,11 @@ void GroupCallManager::on_update_group_call_rights(InputGroupCallId input_group_
   }
 
   auto group_call = get_group_call(input_group_call_id);
-  if (need_group_call_participants(input_group_call_id, group_call)) {
+  if (need_group_call_participants(group_call)) {
     CHECK(group_call != nullptr && group_call->is_inited);
     try_load_group_call_administrators(input_group_call_id, group_call->dialog_id);
 
-    auto *group_call_participants = add_group_call_participants(input_group_call_id);
+    auto *group_call_participants = add_group_call_participants(input_group_call_id, "on_update_group_call_rights");
     if (group_call_participants->are_administrators_loaded) {
       update_group_call_participants_can_be_muted(
           input_group_call_id, can_manage_group_calls(group_call->dialog_id).is_ok(), group_call_participants);
@@ -1438,9 +1430,7 @@ void GroupCallManager::reload_group_call(InputGroupCallId input_group_call_id,
 
 void GroupCallManager::finish_get_group_call(InputGroupCallId input_group_call_id,
                                              Result<tl_object_ptr<telegram_api::phone_groupCall>> &&result) {
-  if (G()->close_flag()) {
-    result = Global::request_aborted_error();
-  }
+  G()->ignore_result_if_closing(result);
 
   auto it = load_group_call_queries_.find(input_group_call_id);
   CHECK(it != load_group_call_queries_.end());
@@ -1449,8 +1439,8 @@ void GroupCallManager::finish_get_group_call(InputGroupCallId input_group_call_i
   load_group_call_queries_.erase(it);
 
   if (result.is_ok()) {
-    td_->contacts_manager_->on_get_users(std::move(result.ok_ref()->users_), "finish_get_group_call");
-    td_->contacts_manager_->on_get_chats(std::move(result.ok_ref()->chats_), "finish_get_group_call");
+    td_->user_manager_->on_get_users(std::move(result.ok_ref()->users_), "finish_get_group_call");
+    td_->chat_manager_->on_get_chats(std::move(result.ok_ref()->chats_), "finish_get_group_call");
 
     if (update_group_call(result.ok()->call_, DialogId()) != input_group_call_id) {
       LOG(ERROR) << "Expected " << input_group_call_id << ", but received " << to_string(result.ok());
@@ -1469,14 +1459,14 @@ void GroupCallManager::finish_get_group_call(InputGroupCallId input_group_call_i
     version = static_cast<const telegram_api::groupCall *>(call->call_.get())->version_;
   }
   process_group_call_participants(input_group_call_id, std::move(call->participants_), version, string(), true, false);
-  if (need_group_call_participants(input_group_call_id)) {
-    auto *group_call_participants = add_group_call_participants(input_group_call_id);
+  auto group_call = get_group_call(input_group_call_id);
+  if (need_group_call_participants(group_call)) {
+    auto *group_call_participants = add_group_call_participants(input_group_call_id, "finish_get_group_call");
     if (group_call_participants->next_offset.empty()) {
       group_call_participants->next_offset = std::move(call->participants_next_offset_);
     }
   }
 
-  auto group_call = get_group_call(input_group_call_id);
   CHECK(group_call != nullptr && group_call->is_inited);
   for (auto &promise : promises) {
     if (promise) {
@@ -1503,7 +1493,7 @@ void GroupCallManager::finish_check_group_call_is_joined(InputGroupCallId input_
   auto *group_call = get_group_call(input_group_call_id);
   CHECK(group_call != nullptr && group_call->is_inited);
   CHECK(audio_source != 0);
-  if (!group_call->is_joined || is_group_call_being_joined(input_group_call_id) ||
+  if (!group_call->is_joined || group_call->is_being_joined ||
       check_group_call_is_joined_timeout_.has_timeout(group_call->group_call_id.get()) ||
       group_call->audio_source != audio_source) {
     return;
@@ -1516,6 +1506,11 @@ void GroupCallManager::finish_check_group_call_is_joined(InputGroupCallId input_
 const string &GroupCallManager::get_group_call_title(const GroupCall *group_call) {
   CHECK(group_call != nullptr);
   return group_call->pending_title.empty() ? group_call->title : group_call->pending_title;
+}
+
+bool GroupCallManager::get_group_call_is_joined(const GroupCall *group_call) {
+  CHECK(group_call != nullptr);
+  return (group_call->is_joined || group_call->is_being_joined) && !group_call->is_being_left;
 }
 
 bool GroupCallManager::get_group_call_start_subscribed(const GroupCall *group_call) {
@@ -1573,16 +1568,19 @@ bool GroupCallManager::get_group_call_can_enable_video(const GroupCall *group_ca
   return group_call->unmuted_video_count < group_call->unmuted_video_limit;
 }
 
-bool GroupCallManager::need_group_call_participants(InputGroupCallId input_group_call_id) const {
-  return need_group_call_participants(input_group_call_id, get_group_call(input_group_call_id));
+bool GroupCallManager::is_group_call_active(const GroupCall *group_call) {
+  return group_call != nullptr && group_call->is_inited && group_call->is_active;
 }
 
-bool GroupCallManager::need_group_call_participants(InputGroupCallId input_group_call_id,
-                                                    const GroupCall *group_call) const {
-  if (group_call == nullptr || !group_call->is_inited || !group_call->is_active) {
+bool GroupCallManager::need_group_call_participants(InputGroupCallId input_group_call_id) const {
+  return need_group_call_participants(get_group_call(input_group_call_id));
+}
+
+bool GroupCallManager::need_group_call_participants(const GroupCall *group_call) {
+  if (!is_group_call_active(group_call) || group_call->is_being_left) {
     return false;
   }
-  if (group_call->is_joined || group_call->need_rejoin || is_group_call_being_joined(input_group_call_id)) {
+  if (group_call->is_joined || group_call->need_rejoin || group_call->is_being_joined) {
     return true;
   }
   return false;
@@ -1594,8 +1592,8 @@ void GroupCallManager::on_get_group_call_participants(
   LOG(INFO) << "Receive group call participants: " << to_string(participants);
 
   CHECK(participants != nullptr);
-  td_->contacts_manager_->on_get_users(std::move(participants->users_), "on_get_group_call_participants");
-  td_->contacts_manager_->on_get_chats(std::move(participants->chats_), "on_get_group_call_participants");
+  td_->user_manager_->on_get_users(std::move(participants->users_), "on_get_group_call_participants");
+  td_->chat_manager_->on_get_chats(std::move(participants->chats_), "on_get_group_call_participants");
 
   if (!need_group_call_participants(input_group_call_id)) {
     return;
@@ -1630,7 +1628,7 @@ void GroupCallManager::on_get_group_call_participants(
   }
 
   if (is_load) {
-    auto *group_call_participants = add_group_call_participants(input_group_call_id);
+    auto *group_call_participants = add_group_call_participants(input_group_call_id, "on_get_group_call_participants");
     if (group_call_participants->next_offset == offset) {
       if (!offset.empty() && participants->next_offset_.empty() && group_call_participants->joined_date_asc) {
         LOG(INFO) << "Ignore empty next_offset";
@@ -1671,17 +1669,17 @@ void GroupCallManager::on_get_group_call_participants(
                      << real_participant_count << " in " << input_group_call_id << " from " << group_call->dialog_id;
         }
         need_update |=
-            set_group_call_participant_count(group_call, real_participant_count, "on_get_group_call_participants");
+            set_group_call_participant_count(group_call, real_participant_count, "on_get_group_call_participants 1");
       }
       if (process_pending_group_call_participant_updates(input_group_call_id)) {
         need_update = false;
       }
       if (group_call->loaded_all_participants || !group_call_participants->min_order.has_video()) {
         set_group_call_unmuted_video_count(group_call, group_call_participants->local_unmuted_video_count,
-                                           "on_get_group_call_participants");
+                                           "on_get_group_call_participants 2");
       }
       if (need_update) {
-        send_update_group_call(group_call, "on_get_group_call_participants");
+        send_update_group_call(group_call, "on_get_group_call_participants 3");
       }
 
       if (is_sync && group_call->need_syncing_participants) {
@@ -1693,8 +1691,8 @@ void GroupCallManager::on_get_group_call_participants(
 }
 
 GroupCallManager::GroupCallParticipants *GroupCallManager::add_group_call_participants(
-    InputGroupCallId input_group_call_id) {
-  CHECK(need_group_call_participants(input_group_call_id));
+    InputGroupCallId input_group_call_id, const char *source) {
+  LOG_CHECK(need_group_call_participants(input_group_call_id)) << source;
 
   auto &participants = group_call_participants_[input_group_call_id];
   if (participants == nullptr) {
@@ -1705,8 +1703,8 @@ GroupCallManager::GroupCallParticipants *GroupCallManager::add_group_call_partic
 }
 
 GroupCallParticipant *GroupCallManager::get_group_call_participant(InputGroupCallId input_group_call_id,
-                                                                   DialogId dialog_id) {
-  return get_group_call_participant(add_group_call_participants(input_group_call_id), dialog_id);
+                                                                   DialogId dialog_id, const char *source) {
+  return get_group_call_participant(add_group_call_participants(input_group_call_id, source), dialog_id);
 }
 
 GroupCallParticipant *GroupCallManager::get_group_call_participant(GroupCallParticipants *group_call_participants,
@@ -1714,7 +1712,7 @@ GroupCallParticipant *GroupCallManager::get_group_call_participant(GroupCallPart
   if (!dialog_id.is_valid()) {
     return nullptr;
   }
-  if (dialog_id == DialogId(td_->contacts_manager_->get_my_id())) {
+  if (dialog_id == td_->dialog_manager_->get_my_dialog_id()) {
     for (auto &group_call_participant : group_call_participants->participants) {
       if (group_call_participant.is_self) {
         return &group_call_participant;
@@ -1748,6 +1746,9 @@ void GroupCallManager::on_update_group_call_participants(
         LOG(ERROR) << "Receive invalid " << to_string(group_call_participant);
         continue;
       }
+      if (participant.is_self && group_call != nullptr && group_call->is_being_left) {
+        continue;
+      }
       if (participant.joined_date == 0) {
         if (group_call == nullptr || version > group_call->leave_version) {
           diff--;
@@ -1765,14 +1766,14 @@ void GroupCallManager::on_update_group_call_participants(
       }
     }
 
-    if (group_call != nullptr && group_call->is_inited && group_call->is_active && group_call->version == -1) {
+    if (is_group_call_active(group_call) && group_call->version == -1) {
       need_update |= set_group_call_participant_count(group_call, group_call->participant_count + diff,
-                                                      "on_update_group_call_participants");
+                                                      "on_update_group_call_participants 1");
       need_update |= set_group_call_unmuted_video_count(group_call, group_call->unmuted_video_count + video_diff,
-                                                        "on_update_group_call_participants");
+                                                        "on_update_group_call_participants 2");
     }
     if (need_update) {
-      send_update_group_call(group_call, "on_update_group_call_participants");
+      send_update_group_call(group_call, "on_update_group_call_participants 3");
     }
 
     LOG(INFO) << "Ignore updateGroupCallParticipants in " << input_group_call_id;
@@ -1788,7 +1789,7 @@ void GroupCallManager::on_update_group_call_participants(
     return;
   }
 
-  auto *group_call_participants = add_group_call_participants(input_group_call_id);
+  auto *group_call_participants = add_group_call_participants(input_group_call_id, "on_update_group_call_participants");
   if (!is_recursive) {
     vector<DialogId> missing_participants;
     for (auto &group_call_participant : participants) {
@@ -1800,7 +1801,7 @@ void GroupCallManager::on_update_group_call_participants(
     }
     if (!missing_participants.empty()) {
       LOG(INFO) << "Can't apply min updates about " << missing_participants << " in " << input_group_call_id;
-      auto input_peers = transform(missing_participants, &MessagesManager::get_input_peer_force);
+      auto input_peers = transform(missing_participants, &DialogManager::get_input_peer_force);
       auto query_promise =
           PromiseCreator::lambda([actor_id = actor_id(this), input_group_call_id,
                                   participants = std::move(participants), version](Result<Unit> &&result) mutable {
@@ -1836,10 +1837,12 @@ void GroupCallManager::on_update_group_call_participants(
     }
     auto dialog_id = participant.dialog_id;
     if (dialog_id.get_type() != DialogType::User && participant.joined_date != 0) {
-      td_->messages_manager_->force_create_dialog(dialog_id, "on_update_group_call_participants 2", true);
+      td_->dialog_manager_->force_create_dialog(dialog_id, "on_update_group_call_participants 4", true);
     }
 
-    if (GroupCallParticipant::is_versioned_update(group_call_participant)) {
+    bool is_versioned = GroupCallParticipant::is_versioned_update(group_call_participant);
+    LOG(INFO) << "Add " << (is_versioned ? "versioned" : "muted") << " update for " << participant;
+    if (is_versioned) {
       pending_version_updates[dialog_id] = td::make_unique<GroupCallParticipant>(std::move(participant));
     } else {
       pending_mute_updates[dialog_id] = td::make_unique<GroupCallParticipant>(std::move(participant));
@@ -1870,9 +1873,6 @@ bool GroupCallManager::process_pending_group_call_participant_updates(InputGroup
   auto &pending_version_updates = participants_it->second->pending_version_updates_;
   auto &pending_mute_updates = participants_it->second->pending_mute_updates_;
 
-  LOG(INFO) << "Process " << pending_version_updates.size() << " versioned and " << pending_mute_updates.size()
-            << " mute updates for " << input_group_call_id;
-
   auto process_mute_updates = [&] {
     while (!pending_mute_updates.empty()) {
       auto it = pending_mute_updates.begin();
@@ -1880,7 +1880,9 @@ bool GroupCallManager::process_pending_group_call_participant_updates(InputGroup
       if (version > group_call->version) {
         return;
       }
+
       auto &participants = it->second.updates;
+      LOG(INFO) << "Process " << participants.size() << " mute updates for " << input_group_call_id;
       for (auto &participant_it : participants) {
         auto &participant = *participant_it.second;
         on_participant_speaking_in_group_call(input_group_call_id, participant);
@@ -1916,11 +1918,15 @@ bool GroupCallManager::process_pending_group_call_participant_updates(InputGroup
     }
 
     if (version == group_call->version + 1) {
+      LOG(INFO) << "Process " << participants.size() << " versioned updates for " << input_group_call_id;
       group_call->version = version;
       for (auto &participant_it : participants) {
         auto &participant = *participant_it.second;
         if (participant.is_self && group_call->is_joined &&
-            (participant.joined_date == 0) == (participant.audio_source == group_call->audio_source)) {
+            (participant.joined_date == 0) ==
+                is_my_audio_source(input_group_call_id, group_call, participant.audio_source)) {
+          LOG(INFO) << "Leaving " << input_group_call_id << " after processing update with joined date "
+                    << participant.joined_date;
           is_left = true;
           if (participant.joined_date != 0) {
             need_rejoin = false;
@@ -1955,27 +1961,37 @@ bool GroupCallManager::process_pending_group_call_participant_updates(InputGroup
   }
 
   need_update |= set_group_call_participant_count(group_call, group_call->participant_count + diff.first,
-                                                  "process_pending_group_call_participant_updates");
+                                                  "process_pending_group_call_participant_updates 1");
   need_update |= set_group_call_unmuted_video_count(group_call, group_call->unmuted_video_count + diff.second,
-                                                    "process_pending_group_call_participant_updates");
+                                                    "process_pending_group_call_participant_updates 2");
   if (is_left && group_call->is_joined) {
-    on_group_call_left_impl(group_call, need_rejoin, "process_pending_group_call_participant_updates");
+    on_group_call_left_impl(group_call, need_rejoin, "process_pending_group_call_participant_updates 3");
     need_update = true;
   }
   need_update |= try_clear_group_call_participants(input_group_call_id);
   if (need_update) {
-    send_update_group_call(group_call, "process_pending_group_call_participant_updates");
+    send_update_group_call(group_call, "process_pending_group_call_participant_updates 4");
   }
 
   return need_update;
 }
 
+bool GroupCallManager::is_my_audio_source(InputGroupCallId input_group_call_id, const GroupCall *group_call,
+                                          int32 audio_source) const {
+  auto it = pending_join_requests_.find(input_group_call_id);
+  if (it == pending_join_requests_.end()) {
+    return audio_source == group_call->audio_source;
+  }
+  CHECK(it->second != nullptr);
+
+  return audio_source == it->second->audio_source;
+}
+
 void GroupCallManager::sync_group_call_participants(InputGroupCallId input_group_call_id) {
-  if (!need_group_call_participants(input_group_call_id)) {
+  auto group_call = get_group_call(input_group_call_id);
+  if (!need_group_call_participants(group_call)) {
     return;
   }
-
-  auto group_call = get_group_call(input_group_call_id);
   CHECK(group_call != nullptr && group_call->is_inited);
 
   sync_participants_timeout_.cancel_timeout(group_call->group_call_id.get());
@@ -2064,7 +2080,7 @@ void GroupCallManager::process_group_call_participants(
         continue;
       }
       if (participant.dialog_id.get_type() != DialogType::User) {
-        td_->messages_manager_->force_create_dialog(participant.dialog_id, "process_group_call_participants", true);
+        td_->dialog_manager_->force_create_dialog(participant.dialog_id, "process_group_call_participants", true);
       }
 
       on_participant_speaking_in_group_call(input_group_call_id, participant);
@@ -2074,7 +2090,7 @@ void GroupCallManager::process_group_call_participants(
 
   FlatHashSet<DialogId, DialogIdHash> old_participant_dialog_ids;
   if (is_sync) {
-    auto *group_call_participants = add_group_call_participants(input_group_call_id);
+    auto *group_call_participants = add_group_call_participants(input_group_call_id, "process_group_call_participants");
     for (auto &participant : group_call_participants->participants) {
       CHECK(participant.dialog_id.is_valid());
       old_participant_dialog_ids.insert(participant.dialog_id);
@@ -2096,7 +2112,7 @@ void GroupCallManager::process_group_call_participants(
       continue;
     }
     if (participant.dialog_id.get_type() != DialogType::User) {
-      td_->messages_manager_->force_create_dialog(participant.dialog_id, "process_group_call_participants", true);
+      td_->dialog_manager_->force_create_dialog(participant.dialog_id, "process_group_call_participants", true);
     }
 
     if (is_load) {
@@ -2122,7 +2138,7 @@ void GroupCallManager::process_group_call_participants(
     min_order = GroupCallParticipantOrder::min();
   }
   if (is_sync) {
-    auto *group_call_participants = add_group_call_participants(input_group_call_id);
+    auto *group_call_participants = add_group_call_participants(input_group_call_id, "process_group_call_participants");
     auto &group_participants = group_call_participants->participants;
     for (auto participant_it = group_participants.begin(); participant_it != group_participants.end();) {
       auto &participant = *participant_it;
@@ -2161,7 +2177,7 @@ void GroupCallManager::process_group_call_participants(
     }
   }
   if (is_load) {
-    auto *group_call_participants = add_group_call_participants(input_group_call_id);
+    auto *group_call_participants = add_group_call_participants(input_group_call_id, "process_group_call_participants");
     if (group_call_participants->min_order > min_order) {
       LOG(INFO) << "Increase min_order from " << group_call_participants->min_order << " to " << min_order << " in "
                 << input_group_call_id;
@@ -2216,8 +2232,8 @@ void GroupCallManager::process_my_group_call_participant(InputGroupCallId input_
   if (!need_group_call_participants(input_group_call_id)) {
     return;
   }
-  auto my_participant = get_group_call_participant(add_group_call_participants(input_group_call_id),
-                                                   DialogId(td_->contacts_manager_->get_my_id()));
+  auto my_participant = get_group_call_participant(input_group_call_id, td_->dialog_manager_->get_my_dialog_id(),
+                                                   "process_my_group_call_participant");
   if (my_participant == nullptr || my_participant->is_fake || my_participant->joined_date < participant.joined_date ||
       (my_participant->joined_date <= participant.joined_date &&
        my_participant->audio_source != participant.audio_source)) {
@@ -2250,7 +2266,7 @@ std::pair<int32, int32> GroupCallManager::process_group_call_participant(InputGr
 
   bool can_self_unmute = get_group_call_can_self_unmute(input_group_call_id);
   bool can_manage = can_manage_group_call(input_group_call_id);
-  auto *participants = add_group_call_participants(input_group_call_id);
+  auto *participants = add_group_call_participants(input_group_call_id, "process_group_call_participant");
   for (size_t i = 0; i < participants->participants.size(); i++) {
     auto &old_participant = participants->participants[i];
     if (old_participant.dialog_id == participant.dialog_id || (old_participant.is_self && participant.is_self)) {
@@ -2286,6 +2302,12 @@ std::pair<int32, int32> GroupCallManager::process_group_call_participant(InputGr
       LOG(INFO) << "Edit " << old_participant << " to " << participant;
       if (old_participant != participant && (old_participant.order.is_valid() || participant.order.is_valid())) {
         send_update_group_call_participant(input_group_call_id, participant, "process_group_call_participant edit");
+        if (old_participant.dialog_id != participant.dialog_id) {
+          // delete old self-participant; shouldn't affect correct apps
+          old_participant.order = GroupCallParticipantOrder();
+          send_update_group_call_participant(input_group_call_id, old_participant,
+                                             "process_group_call_participant edit self");
+        }
       }
       on_participant_speaking_in_group_call(input_group_call_id, participant);
       int32 unmuted_video_diff = participant.get_has_video() - old_participant.get_has_video();
@@ -2355,7 +2377,7 @@ void GroupCallManager::on_update_dialog_about(DialogId dialog_id, const string &
   CHECK(!it->second.empty());
 
   for (const auto &input_group_call_id : it->second) {
-    auto participant = get_group_call_participant(input_group_call_id, dialog_id);
+    auto participant = get_group_call_participant(input_group_call_id, dialog_id, "on_update_dialog_about");
     CHECK(participant != nullptr);
     if ((from_server || participant->is_fake) && participant->about != about) {
       participant->about = about;
@@ -2366,11 +2388,15 @@ void GroupCallManager::on_update_dialog_about(DialogId dialog_id, const string &
   }
 }
 
-int32 GroupCallManager::cancel_join_group_call_request(InputGroupCallId input_group_call_id) {
+int32 GroupCallManager::cancel_join_group_call_request(InputGroupCallId input_group_call_id, GroupCall *group_call) {
   auto it = pending_join_requests_.find(input_group_call_id);
   if (it == pending_join_requests_.end()) {
+    CHECK(group_call == nullptr || !group_call->is_being_joined);
     return 0;
   }
+  CHECK(group_call != nullptr);
+  CHECK(group_call->is_being_joined);
+  group_call->is_being_joined = false;
 
   CHECK(it->second != nullptr);
   if (!it->second->query_ref.empty()) {
@@ -2421,7 +2447,7 @@ void GroupCallManager::get_group_call_streams(GroupCallId group_call_id,
     return promise.set_error(Status::Error(400, "Group call can't be streamed"));
   }
   if (!group_call->is_joined) {
-    if (is_group_call_being_joined(input_group_call_id) || group_call->need_rejoin) {
+    if (group_call->is_being_joined || group_call->need_rejoin) {
       group_call->after_join.push_back(PromiseCreator::lambda(
           [actor_id = actor_id(this), group_call_id, promise = std::move(promise)](Result<Unit> &&result) mutable {
             if (result.is_error()) {
@@ -2484,7 +2510,7 @@ void GroupCallManager::get_group_call_stream_segment(GroupCallId group_call_id, 
     return promise.set_error(Status::Error(400, "Group call can't be streamed"));
   }
   if (!group_call->is_joined) {
-    if (is_group_call_being_joined(input_group_call_id) || group_call->need_rejoin) {
+    if (group_call->is_being_joined || group_call->need_rejoin) {
       group_call->after_join.push_back(PromiseCreator::lambda(
           [actor_id = actor_id(this), group_call_id, time_offset, scale, channel_id, quality = std::move(quality),
            promise = std::move(promise)](Result<Unit> &&result) mutable {
@@ -2590,17 +2616,18 @@ void GroupCallManager::join_group_call(GroupCallId group_call_id, DialogId as_di
     return promise.set_error(Status::Error(400, "Group call is finished"));
   }
   bool need_update = false;
+  bool old_is_joined = get_group_call_is_joined(group_call);
   bool is_rejoin = group_call->need_rejoin;
   if (group_call->need_rejoin) {
     group_call->need_rejoin = false;
     need_update = true;
   }
 
-  cancel_join_group_call_request(input_group_call_id);
+  cancel_join_group_call_request(input_group_call_id, group_call);
 
   bool have_as_dialog_id = true;
   {
-    auto my_dialog_id = DialogId(td_->contacts_manager_->get_my_id());
+    auto my_dialog_id = td_->dialog_manager_->get_my_dialog_id();
     if (!as_dialog_id.is_valid()) {
       as_dialog_id = my_dialog_id;
     }
@@ -2609,26 +2636,23 @@ void GroupCallManager::join_group_call(GroupCallId group_call_id, DialogId as_di
       if (as_dialog_id != my_dialog_id) {
         return promise.set_error(Status::Error(400, "Can't join voice chat as another user"));
       }
-      if (!td_->contacts_manager_->have_user_force(as_dialog_id.get_user_id())) {
+      if (!td_->user_manager_->have_user_force(as_dialog_id.get_user_id(), "join_group_call")) {
         have_as_dialog_id = false;
       }
     } else {
-      if (!td_->messages_manager_->have_dialog_force(as_dialog_id, "join_group_call")) {
+      if (!td_->dialog_manager_->have_dialog_force(as_dialog_id, "join_group_call")) {
         return promise.set_error(Status::Error(400, "Join as chat not found"));
       }
     }
-    if (!td_->messages_manager_->have_input_peer(as_dialog_id, AccessRights::Read)) {
+    if (!td_->dialog_manager_->have_input_peer(as_dialog_id, false, AccessRights::Read)) {
       return promise.set_error(Status::Error(400, "Can't access the join as participant"));
-    }
-    if (dialog_type == DialogType::SecretChat) {
-      return promise.set_error(Status::Error(400, "Can't join voice chat as a secret chat"));
     }
   }
 
   if (group_call->is_being_left) {
     group_call->is_being_left = false;
-    need_update |= group_call->is_joined;
   }
+  group_call->is_being_joined = true;
 
   auto generation = ++join_group_request_generation_;
   auto &request = pending_join_requests_[input_group_call_id];
@@ -2653,14 +2677,14 @@ void GroupCallManager::join_group_call(GroupCallId group_call_id, DialogId as_di
                                                                                   true);
   } else {
     if (as_dialog_id.get_type() != DialogType::User) {
-      td_->messages_manager_->force_create_dialog(as_dialog_id, "join_group_call");
+      td_->dialog_manager_->force_create_dialog(as_dialog_id, "join_group_call");
     }
   }
   if (group_call->is_inited && have_as_dialog_id) {
     GroupCallParticipant participant;
     participant.is_self = true;
     participant.dialog_id = as_dialog_id;
-    participant.about = td_->contacts_manager_->get_dialog_about(participant.dialog_id);
+    participant.about = td_->dialog_manager_->get_dialog_about(participant.dialog_id);
     participant.audio_source = audio_source;
     participant.joined_date = G()->unix_time();
     // if can_self_unmute has never been inited from self-participant,
@@ -2674,12 +2698,12 @@ void GroupCallManager::join_group_call(GroupCallId group_call_id, DialogId as_di
     if (diff.first != 0) {
       CHECK(diff.first == 1);
       need_update |= set_group_call_participant_count(group_call, group_call->participant_count + diff.first,
-                                                      "join_group_call", true);
+                                                      "join_group_call 1", true);
     }
     if (diff.second != 0) {
       CHECK(diff.second == 1);
       need_update |= set_group_call_unmuted_video_count(group_call, group_call->unmuted_video_count + diff.second,
-                                                        "join_group_call");
+                                                        "join_group_call 2");
     }
   }
   if (group_call->is_my_video_enabled != is_my_video_enabled) {
@@ -2689,9 +2713,11 @@ void GroupCallManager::join_group_call(GroupCallId group_call_id, DialogId as_di
     }
     need_update = true;
   }
-
+  if (old_is_joined != get_group_call_is_joined(group_call)) {
+    need_update = true;
+  }
   if (group_call->is_inited && need_update) {
-    send_update_group_call(group_call, "join_group_call");
+    send_update_group_call(group_call, "join_group_call 3");
   }
 
   try_load_group_call_administrators(input_group_call_id, group_call->dialog_id);
@@ -2707,7 +2733,7 @@ void GroupCallManager::start_group_call_screen_sharing(GroupCallId group_call_id
     return promise.set_error(Status::Error(400, "GROUPCALL_JOIN_MISSING"));
   }
   if (!group_call->is_joined || group_call->is_being_left) {
-    if (is_group_call_being_joined(input_group_call_id) || group_call->need_rejoin) {
+    if (group_call->is_being_joined || group_call->need_rejoin) {
       group_call->after_join.push_back(
           PromiseCreator::lambda([actor_id = actor_id(this), group_call_id, audio_source, payload = std::move(payload),
                                   promise = std::move(promise)](Result<Unit> &&result) mutable {
@@ -2750,7 +2776,7 @@ void GroupCallManager::end_group_call_screen_sharing(GroupCallId group_call_id, 
     return promise.set_error(Status::Error(400, "GROUPCALL_JOIN_MISSING"));
   }
   if (!group_call->is_joined || group_call->is_being_left) {
-    if (is_group_call_being_joined(input_group_call_id) || group_call->need_rejoin) {
+    if (group_call->is_being_joined || group_call->need_rejoin) {
       group_call->after_join.push_back(PromiseCreator::lambda(
           [actor_id = actor_id(this), group_call_id, promise = std::move(promise)](Result<Unit> &&result) mutable {
             if (result.is_error()) {
@@ -2785,7 +2811,7 @@ void GroupCallManager::try_load_group_call_administrators(InputGroupCallId input
         send_closure(actor_id, &GroupCallManager::finish_load_group_call_administrators, input_group_call_id,
                      std::move(result));
       });
-  td_->contacts_manager_->search_dialog_participants(
+  td_->dialog_participant_manager_->search_dialog_participants(
       dialog_id, string(), 100, DialogParticipantFilter(td_api::make_object<td_api::chatMembersFilterAdministrators>()),
       std::move(promise));
 }
@@ -2801,7 +2827,7 @@ void GroupCallManager::finish_load_group_call_administrators(InputGroupCallId in
   }
 
   auto *group_call = get_group_call(input_group_call_id);
-  if (!need_group_call_participants(input_group_call_id, group_call)) {
+  if (!need_group_call_participants(group_call)) {
     return;
   }
   CHECK(group_call != nullptr);
@@ -2813,12 +2839,13 @@ void GroupCallManager::finish_load_group_call_administrators(InputGroupCallId in
   auto participants = result.move_as_ok();
   for (auto &administrator : participants.participants_) {
     if (administrator.status_.can_manage_calls() &&
-        administrator.dialog_id_ != DialogId(td_->contacts_manager_->get_my_id())) {
+        administrator.dialog_id_ != td_->dialog_manager_->get_my_dialog_id()) {
       administrator_dialog_ids.push_back(administrator.dialog_id_);
     }
   }
 
-  auto *group_call_participants = add_group_call_participants(input_group_call_id);
+  auto *group_call_participants =
+      add_group_call_participants(input_group_call_id, "finish_load_group_call_administrators");
   if (group_call_participants->are_administrators_loaded &&
       group_call_participants->administrator_dialog_ids == administrator_dialog_ids) {
     return;
@@ -2885,6 +2912,7 @@ bool GroupCallManager::on_join_group_call_response(InputGroupCallId input_group_
   CHECK(group_call != nullptr);
   group_call->is_joined = true;
   group_call->need_rejoin = false;
+  group_call->is_being_joined = false;
   group_call->is_being_left = false;
   group_call->joined_date = G()->unix_time();
   group_call->audio_source = it->second->audio_source;
@@ -2914,17 +2942,26 @@ void GroupCallManager::finish_join_group_call(InputGroupCallId input_group_call_
     return;
   }
 
-  const GroupCall *group_call = get_group_call(input_group_call_id);
+  GroupCall *group_call = get_group_call(input_group_call_id);
+  bool need_update = false;
+  if (group_call != nullptr && group_call->is_being_joined) {
+    bool old_is_joined = get_group_call_is_joined(group_call);
+    group_call->is_being_joined = false;
+    need_update |= old_is_joined != get_group_call_is_joined(group_call);
+  }
   remove_recent_group_call_speaker(input_group_call_id, as_dialog_id);
   if (try_clear_group_call_participants(input_group_call_id)) {
     CHECK(group_call != nullptr);
+    need_update = true;
+  }
+  if (need_update && group_call->is_inited) {
     send_update_group_call(group_call, "finish_join_group_call");
   }
   process_group_call_after_join_requests(input_group_call_id, "finish_join_group_call");
 
   if (group_call != nullptr && group_call->dialog_id.is_valid()) {
     update_group_call_dialog(group_call, "finish_join_group_call", false);
-    td_->messages_manager_->reload_dialog_info_full(group_call->dialog_id, "finish_join_group_call");
+    td_->dialog_manager_->reload_dialog_info_full(group_call->dialog_id, "finish_join_group_call");
   }
 }
 
@@ -2934,16 +2971,16 @@ void GroupCallManager::process_group_call_after_join_requests(InputGroupCallId i
   if (group_call == nullptr || !group_call->is_inited) {
     return;
   }
-  if (is_group_call_being_joined(input_group_call_id) || group_call->need_rejoin) {
-    LOG(ERROR) << "Failed to process after-join requests from " << source << ": "
-               << is_group_call_being_joined(input_group_call_id) << " " << group_call->need_rejoin;
+  if (group_call->is_being_joined || group_call->need_rejoin) {
+    LOG(ERROR) << "Failed to process after-join requests from " << source << ": " << group_call->is_being_joined << " "
+               << group_call->need_rejoin;
     return;
   }
   if (group_call->after_join.empty()) {
     return;
   }
 
-  if (!group_call->is_active || !group_call->is_joined) {
+  if (!group_call->is_active || group_call->is_being_left || !group_call->is_joined) {
     fail_promises(group_call->after_join, Status::Error(400, "GROUPCALL_JOIN_MISSING"));
   } else {
     set_promises(group_call->after_join);
@@ -3002,7 +3039,7 @@ void GroupCallManager::on_edit_group_call_title(InputGroupCallId input_group_cal
   }
 
   auto *group_call = get_group_call(input_group_call_id);
-  if (group_call == nullptr || !group_call->is_inited || !group_call->is_active) {
+  if (!is_group_call_active(group_call)) {
     return;
   }
 
@@ -3029,11 +3066,11 @@ void GroupCallManager::toggle_group_call_is_my_video_paused(GroupCallId group_ca
   TRY_RESULT_PROMISE(promise, input_group_call_id, get_input_group_call_id(group_call_id));
 
   auto *group_call = get_group_call(input_group_call_id);
-  if (group_call == nullptr || !group_call->is_inited || !group_call->is_active) {
+  if (!is_group_call_active(group_call)) {
     return promise.set_error(Status::Error(400, "GROUPCALL_JOIN_MISSING"));
   }
   if (!group_call->is_joined) {
-    if (is_group_call_being_joined(input_group_call_id) || group_call->need_rejoin) {
+    if (group_call->is_being_joined || group_call->need_rejoin) {
       group_call->after_join.push_back(
           PromiseCreator::lambda([actor_id = actor_id(this), group_call_id, is_my_video_paused,
                                   promise = std::move(promise)](Result<Unit> &&result) mutable {
@@ -3083,8 +3120,7 @@ void GroupCallManager::on_toggle_group_call_is_my_video_paused(InputGroupCallId 
   }
 
   auto *group_call = get_group_call(input_group_call_id);
-  if (group_call == nullptr || !group_call->is_inited || !group_call->is_active ||
-      !group_call->have_pending_is_my_video_paused) {
+  if (!is_group_call_active(group_call) || !group_call->have_pending_is_my_video_paused) {
     return;
   }
 
@@ -3114,11 +3150,11 @@ void GroupCallManager::toggle_group_call_is_my_video_enabled(GroupCallId group_c
   TRY_RESULT_PROMISE(promise, input_group_call_id, get_input_group_call_id(group_call_id));
 
   auto *group_call = get_group_call(input_group_call_id);
-  if (group_call == nullptr || !group_call->is_inited || !group_call->is_active) {
+  if (!is_group_call_active(group_call)) {
     return promise.set_error(Status::Error(400, "GROUPCALL_JOIN_MISSING"));
   }
   if (!group_call->is_joined) {
-    if (is_group_call_being_joined(input_group_call_id) || group_call->need_rejoin) {
+    if (group_call->is_being_joined || group_call->need_rejoin) {
       group_call->after_join.push_back(
           PromiseCreator::lambda([actor_id = actor_id(this), group_call_id, is_my_video_enabled,
                                   promise = std::move(promise)](Result<Unit> &&result) mutable {
@@ -3170,8 +3206,7 @@ void GroupCallManager::on_toggle_group_call_is_my_video_enabled(InputGroupCallId
   }
 
   auto *group_call = get_group_call(input_group_call_id);
-  if (group_call == nullptr || !group_call->is_inited || !group_call->is_active ||
-      !group_call->have_pending_is_my_video_enabled) {
+  if (!is_group_call_active(group_call) || !group_call->have_pending_is_my_video_enabled) {
     return;
   }
 
@@ -3202,11 +3237,11 @@ void GroupCallManager::toggle_group_call_is_my_presentation_paused(GroupCallId g
   TRY_RESULT_PROMISE(promise, input_group_call_id, get_input_group_call_id(group_call_id));
 
   auto *group_call = get_group_call(input_group_call_id);
-  if (group_call == nullptr || !group_call->is_inited || !group_call->is_active) {
+  if (!is_group_call_active(group_call)) {
     return promise.set_error(Status::Error(400, "GROUPCALL_JOIN_MISSING"));
   }
   if (!group_call->is_joined) {
-    if (is_group_call_being_joined(input_group_call_id) || group_call->need_rejoin) {
+    if (group_call->is_being_joined || group_call->need_rejoin) {
       group_call->after_join.push_back(
           PromiseCreator::lambda([actor_id = actor_id(this), group_call_id, is_my_presentation_paused,
                                   promise = std::move(promise)](Result<Unit> &&result) mutable {
@@ -3259,8 +3294,7 @@ void GroupCallManager::on_toggle_group_call_is_my_presentation_paused(InputGroup
   }
 
   auto *group_call = get_group_call(input_group_call_id);
-  if (group_call == nullptr || !group_call->is_inited || !group_call->is_active ||
-      !group_call->have_pending_is_my_presentation_paused) {
+  if (!is_group_call_active(group_call) || !group_call->have_pending_is_my_presentation_paused) {
     return;
   }
 
@@ -3341,8 +3375,7 @@ void GroupCallManager::on_toggle_group_call_start_subscription(InputGroupCallId 
   }
 
   auto *group_call = get_group_call(input_group_call_id);
-  if (group_call == nullptr || !group_call->is_inited || !group_call->is_active ||
-      !group_call->have_pending_start_subscribed) {
+  if (!is_group_call_active(group_call) || !group_call->have_pending_start_subscribed) {
     return;
   }
 
@@ -3426,8 +3459,7 @@ void GroupCallManager::on_toggle_group_call_mute_new_participants(InputGroupCall
   }
 
   auto *group_call = get_group_call(input_group_call_id);
-  if (group_call == nullptr || !group_call->is_inited || !group_call->is_active ||
-      !group_call->have_pending_mute_new_participants) {
+  if (!is_group_call_active(group_call) || !group_call->have_pending_mute_new_participants) {
     return;
   }
 
@@ -3487,18 +3519,15 @@ void GroupCallManager::invite_group_call_participants(GroupCallId group_call_id,
   TRY_RESULT_PROMISE(promise, input_group_call_id, get_input_group_call_id(group_call_id));
 
   vector<tl_object_ptr<telegram_api::InputUser>> input_users;
-  auto my_user_id = td_->contacts_manager_->get_my_id();
+  auto my_user_id = td_->user_manager_->get_my_id();
   for (auto user_id : user_ids) {
-    auto r_input_user = td_->contacts_manager_->get_input_user(user_id);
-    if (r_input_user.is_error()) {
-      return promise.set_error(r_input_user.move_as_error());
-    }
+    TRY_RESULT_PROMISE(promise, input_user, td_->user_manager_->get_input_user(user_id));
 
     if (user_id == my_user_id) {
       // can't invite self
       continue;
     }
-    input_users.push_back(r_input_user.move_as_ok());
+    input_users.push_back(std::move(input_user));
   }
 
   if (input_users.empty()) {
@@ -3606,7 +3635,7 @@ void GroupCallManager::on_toggle_group_call_recording(InputGroupCallId input_gro
   }
 
   auto *group_call = get_group_call(input_group_call_id);
-  if (group_call == nullptr || !group_call->is_inited || !group_call->is_active) {
+  if (!is_group_call_active(group_call)) {
     return;
   }
 
@@ -3636,11 +3665,11 @@ void GroupCallManager::set_group_call_participant_is_speaking(GroupCallId group_
   TRY_RESULT_PROMISE(promise, input_group_call_id, get_input_group_call_id(group_call_id));
 
   auto *group_call = get_group_call(input_group_call_id);
-  if (group_call == nullptr || !group_call->is_inited || !group_call->is_active) {
+  if (!is_group_call_active(group_call)) {
     return promise.set_value(Unit());
   }
   if (!group_call->is_joined) {
-    if (is_group_call_being_joined(input_group_call_id) || group_call->need_rejoin) {
+    if (group_call->is_being_joined || group_call->need_rejoin) {
       group_call->after_join.push_back(
           PromiseCreator::lambda([actor_id = actor_id(this), group_call_id, audio_source, is_speaking,
                                   promise = std::move(promise), date](Result<Unit> &&result) mutable {
@@ -3696,7 +3725,7 @@ void GroupCallManager::set_group_call_participant_is_speaking(GroupCallId group_
   }
 
   if (is_speaking) {
-    on_user_speaking_in_group_call(group_call_id, dialog_id, date, is_recursive);
+    on_user_speaking_in_group_call(group_call_id, dialog_id, date, false, is_recursive);
   }
 
   if (group_call->audio_source == audio_source && group_call->dialog_id.is_valid() &&
@@ -3715,11 +3744,11 @@ void GroupCallManager::toggle_group_call_participant_is_muted(GroupCallId group_
   TRY_RESULT_PROMISE(promise, input_group_call_id, get_input_group_call_id(group_call_id));
 
   auto *group_call = get_group_call(input_group_call_id);
-  if (group_call == nullptr || !group_call->is_inited || !group_call->is_active) {
+  if (!is_group_call_active(group_call) || group_call->is_being_left) {
     return promise.set_error(Status::Error(400, "GROUPCALL_JOIN_MISSING"));
   }
   if (!group_call->is_joined) {
-    if (is_group_call_being_joined(input_group_call_id) || group_call->need_rejoin) {
+    if (group_call->is_being_joined || group_call->need_rejoin) {
       group_call->after_join.push_back(
           PromiseCreator::lambda([actor_id = actor_id(this), group_call_id, dialog_id, is_muted,
                                   promise = std::move(promise)](Result<Unit> &&result) mutable {
@@ -3735,7 +3764,7 @@ void GroupCallManager::toggle_group_call_participant_is_muted(GroupCallId group_
     return promise.set_error(Status::Error(400, "GROUPCALL_JOIN_MISSING"));
   }
 
-  auto participants = add_group_call_participants(input_group_call_id);
+  auto participants = add_group_call_participants(input_group_call_id, "toggle_group_call_participant_is_muted");
   auto participant = get_group_call_participant(participants, dialog_id);
   if (participant == nullptr) {
     return promise.set_error(Status::Error(400, "Can't find group call participant"));
@@ -3781,11 +3810,11 @@ void GroupCallManager::on_toggle_group_call_participant_is_muted(InputGroupCallI
   }
 
   auto *group_call = get_group_call(input_group_call_id);
-  if (group_call == nullptr || !group_call->is_inited || !group_call->is_active || !group_call->is_joined) {
+  if (!is_group_call_active(group_call) || group_call->is_being_left || !group_call->is_joined) {
     return promise.set_value(Unit());
   }
 
-  auto participants = add_group_call_participants(input_group_call_id);
+  auto participants = add_group_call_participants(input_group_call_id, "on_toggle_group_call_participant_is_muted");
   auto participant = get_group_call_participant(participants, dialog_id);
   if (participant == nullptr || participant->pending_is_muted_generation != generation) {
     return promise.set_value(Unit());
@@ -3815,11 +3844,11 @@ void GroupCallManager::set_group_call_participant_volume_level(GroupCallId group
   }
 
   auto *group_call = get_group_call(input_group_call_id);
-  if (group_call == nullptr || !group_call->is_inited || !group_call->is_active) {
+  if (!is_group_call_active(group_call) || group_call->is_being_left) {
     return promise.set_error(Status::Error(400, "GROUPCALL_JOIN_MISSING"));
   }
   if (!group_call->is_joined) {
-    if (is_group_call_being_joined(input_group_call_id) || group_call->need_rejoin) {
+    if (group_call->is_being_joined || group_call->need_rejoin) {
       group_call->after_join.push_back(
           PromiseCreator::lambda([actor_id = actor_id(this), group_call_id, dialog_id, volume_level,
                                   promise = std::move(promise)](Result<Unit> &&result) mutable {
@@ -3835,7 +3864,8 @@ void GroupCallManager::set_group_call_participant_volume_level(GroupCallId group
     return promise.set_error(Status::Error(400, "GROUPCALL_JOIN_MISSING"));
   }
 
-  auto participant = get_group_call_participant(input_group_call_id, dialog_id);
+  auto participant =
+      get_group_call_participant(input_group_call_id, dialog_id, "set_group_call_participant_volume_level");
   if (participant == nullptr) {
     return promise.set_error(Status::Error(400, "Can't find group call participant"));
   }
@@ -3878,11 +3908,12 @@ void GroupCallManager::on_set_group_call_participant_volume_level(InputGroupCall
   }
 
   auto *group_call = get_group_call(input_group_call_id);
-  if (group_call == nullptr || !group_call->is_inited || !group_call->is_active || !group_call->is_joined) {
+  if (!is_group_call_active(group_call) || group_call->is_being_left || !group_call->is_joined) {
     return promise.set_value(Unit());
   }
 
-  auto participant = get_group_call_participant(input_group_call_id, dialog_id);
+  auto participant =
+      get_group_call_participant(input_group_call_id, dialog_id, "on_set_group_call_participant_volume_level");
   if (participant == nullptr || participant->pending_volume_level_generation != generation) {
     return promise.set_value(Unit());
   }
@@ -3906,11 +3937,11 @@ void GroupCallManager::toggle_group_call_participant_is_hand_raised(GroupCallId 
   TRY_RESULT_PROMISE(promise, input_group_call_id, get_input_group_call_id(group_call_id));
 
   auto *group_call = get_group_call(input_group_call_id);
-  if (group_call == nullptr || !group_call->is_inited || !group_call->is_active) {
+  if (!is_group_call_active(group_call) || group_call->is_being_left) {
     return promise.set_error(Status::Error(400, "GROUPCALL_JOIN_MISSING"));
   }
   if (!group_call->is_joined) {
-    if (is_group_call_being_joined(input_group_call_id) || group_call->need_rejoin) {
+    if (group_call->is_being_joined || group_call->need_rejoin) {
       group_call->after_join.push_back(
           PromiseCreator::lambda([actor_id = actor_id(this), group_call_id, dialog_id, is_hand_raised,
                                   promise = std::move(promise)](Result<Unit> &&result) mutable {
@@ -3926,7 +3957,7 @@ void GroupCallManager::toggle_group_call_participant_is_hand_raised(GroupCallId 
     return promise.set_error(Status::Error(400, "GROUPCALL_JOIN_MISSING"));
   }
 
-  auto participants = add_group_call_participants(input_group_call_id);
+  auto participants = add_group_call_participants(input_group_call_id, "toggle_group_call_participant_is_hand_raised");
   auto participant = get_group_call_participant(participants, dialog_id);
   if (participant == nullptr) {
     return promise.set_error(Status::Error(400, "Can't find group call participant"));
@@ -3978,11 +4009,12 @@ void GroupCallManager::on_toggle_group_call_participant_is_hand_raised(InputGrou
   }
 
   auto *group_call = get_group_call(input_group_call_id);
-  if (group_call == nullptr || !group_call->is_inited || !group_call->is_active || !group_call->is_joined) {
+  if (!is_group_call_active(group_call) || group_call->is_being_left || !group_call->is_joined) {
     return promise.set_value(Unit());
   }
 
-  auto participant = get_group_call_participant(input_group_call_id, dialog_id);
+  auto participant =
+      get_group_call_participant(input_group_call_id, dialog_id, "on_toggle_group_call_participant_is_hand_raised");
   if (participant == nullptr || participant->pending_is_hand_raised_generation != generation) {
     return promise.set_value(Unit());
   }
@@ -4007,7 +4039,7 @@ void GroupCallManager::load_group_call_participants(GroupCallId group_call_id, i
   TRY_RESULT_PROMISE(promise, input_group_call_id, get_input_group_call_id(group_call_id));
 
   auto *group_call = get_group_call(input_group_call_id);
-  if (!need_group_call_participants(input_group_call_id, group_call)) {
+  if (!need_group_call_participants(group_call)) {
     return promise.set_error(Status::Error(400, "Can't load group call participants"));
   }
   CHECK(group_call != nullptr && group_call->is_inited);
@@ -4033,14 +4065,17 @@ void GroupCallManager::leave_group_call(GroupCallId group_call_id, Promise<Unit>
   TRY_RESULT_PROMISE(promise, input_group_call_id, get_input_group_call_id(group_call_id));
 
   auto *group_call = get_group_call(input_group_call_id);
-  if (group_call == nullptr || !group_call->is_inited || !group_call->is_active || !group_call->is_joined ||
-      group_call->is_being_left) {
-    if (cancel_join_group_call_request(input_group_call_id) != 0) {
-      if (try_clear_group_call_participants(input_group_call_id)) {
-        send_update_group_call(group_call, "leave_group_call 1");
+  if (!is_group_call_active(group_call) || group_call->is_being_left || !group_call->is_joined) {
+    if (group_call != nullptr) {
+      bool old_is_joined = get_group_call_is_joined(group_call);
+      if (cancel_join_group_call_request(input_group_call_id, group_call) != 0) {
+        if (try_clear_group_call_participants(input_group_call_id) ||
+            old_is_joined != get_group_call_is_joined(group_call)) {
+          send_update_group_call(group_call, "leave_group_call 1");
+        }
+        process_group_call_after_join_requests(input_group_call_id, "leave_group_call 1");
+        return promise.set_value(Unit());
       }
-      process_group_call_after_join_requests(input_group_call_id, "leave_group_call 1");
-      return promise.set_value(Unit());
     }
     if (group_call != nullptr && group_call->need_rejoin) {
       group_call->need_rejoin = false;
@@ -4053,12 +4088,17 @@ void GroupCallManager::leave_group_call(GroupCallId group_call_id, Promise<Unit>
     }
     return promise.set_error(Status::Error(400, "GROUPCALL_JOIN_MISSING"));
   }
-  auto audio_source = cancel_join_group_call_request(input_group_call_id);
+  auto audio_source = cancel_join_group_call_request(input_group_call_id, group_call);
   if (audio_source == 0) {
     audio_source = group_call->audio_source;
   }
   group_call->is_being_left = true;
   group_call->need_rejoin = false;
+  group_call->pending_is_my_video_enabled = false;
+  group_call->have_pending_is_my_video_enabled = true;
+  group_call->is_my_video_paused = false;
+  group_call->have_pending_is_my_video_paused = true;
+  try_clear_group_call_participants(input_group_call_id);
   send_update_group_call(group_call, "leave_group_call");
 
   process_group_call_after_join_requests(input_group_call_id, "leave_group_call 3");
@@ -4095,9 +4135,9 @@ void GroupCallManager::on_group_call_left_impl(GroupCall *group_call, bool need_
   group_call->need_rejoin = need_rejoin && !group_call->is_being_left;
   if (group_call->need_rejoin && group_call->dialog_id.is_valid()) {
     auto dialog_id = group_call->dialog_id;
-    if (!td_->messages_manager_->have_input_peer(dialog_id, AccessRights::Read) ||
+    if (!td_->dialog_manager_->have_input_peer(dialog_id, false, AccessRights::Read) ||
         (dialog_id.get_type() == DialogType::Chat &&
-         !td_->contacts_manager_->get_chat_status(dialog_id.get_chat_id()).is_member())) {
+         !td_->chat_manager_->get_chat_status(dialog_id.get_chat_id()).is_member())) {
       group_call->need_rejoin = false;
     }
   }
@@ -4107,6 +4147,7 @@ void GroupCallManager::on_group_call_left_impl(GroupCall *group_call, bool need_
   group_call->is_my_video_enabled = false;
   group_call->is_my_presentation_paused = false;
   group_call->have_pending_is_my_video_enabled = false;
+  group_call->have_pending_is_my_video_paused = false;
   if (!group_call->is_active) {
     group_call->can_be_managed = false;
   }
@@ -4116,7 +4157,7 @@ void GroupCallManager::on_group_call_left_impl(GroupCall *group_call, bool need_
   auto input_group_call_id = get_input_group_call_id(group_call->group_call_id).ok();
   try_clear_group_call_participants(input_group_call_id);
   if (!group_call->need_rejoin) {
-    if (is_group_call_being_joined(input_group_call_id)) {
+    if (group_call->is_being_joined) {
       LOG(ERROR) << "Left a being joined group call. Did you change audio_source_id without leaving the group call?";
     } else {
       process_group_call_after_join_requests(input_group_call_id, "on_group_call_left_impl");
@@ -4153,11 +4194,10 @@ void GroupCallManager::on_update_group_call(tl_object_ptr<telegram_api::GroupCal
 }
 
 bool GroupCallManager::try_clear_group_call_participants(InputGroupCallId input_group_call_id) {
-  if (need_group_call_participants(input_group_call_id)) {
+  auto group_call = get_group_call(input_group_call_id);
+  if (need_group_call_participants(group_call)) {
     return false;
   }
-
-  auto group_call = get_group_call(input_group_call_id);
   if (group_call != nullptr) {
     update_group_call_participant_order_timeout_.cancel_timeout(group_call->group_call_id.get());
     remove_recent_group_call_speaker(input_group_call_id, group_call->as_dialog_id);
@@ -4174,26 +4214,26 @@ bool GroupCallManager::try_clear_group_call_participants(InputGroupCallId input_
 
   CHECK(group_call != nullptr && group_call->is_inited);
   LOG(INFO) << "Clear participants in " << input_group_call_id << " from " << group_call->dialog_id;
+  bool need_update = false;
   if (group_call->loaded_all_participants) {
     group_call->loaded_all_participants = false;
-    send_update_group_call(group_call, "try_clear_group_call_participants");
+    need_update = true;
   }
   group_call->leave_version = group_call->version;
   group_call->version = -1;
 
-  bool need_update = false;
   for (auto &participant : participants->participants) {
     if (participant.order.is_valid()) {
       CHECK(participant.order >= participants->min_order);
       participant.order = GroupCallParticipantOrder();
-      send_update_group_call_participant(input_group_call_id, participant, "try_clear_group_call_participants");
+      send_update_group_call_participant(input_group_call_id, participant, "try_clear_group_call_participants 1");
 
       if (participant.is_self) {
         need_update |= set_group_call_participant_count(group_call, group_call->participant_count - 1,
-                                                        "try_clear_group_call_participants");
+                                                        "try_clear_group_call_participants 2");
         if (participant.get_has_video()) {
           need_update |= set_group_call_unmuted_video_count(group_call, group_call->unmuted_video_count - 1,
-                                                            "try_clear_group_call_participants");
+                                                            "try_clear_group_call_participants 3");
         }
       }
     }
@@ -4303,7 +4343,7 @@ InputGroupCallId GroupCallManager::update_group_call(const tl_object_ptr<telegra
     group_call->dialog_id = dialog_id;
   }
   if (call.is_active && join_params.empty() && !group_call->is_joined &&
-      (group_call->need_rejoin || is_group_call_being_joined(input_group_call_id))) {
+      (group_call->need_rejoin || group_call->is_being_joined)) {
     call.participant_count++;
   }
   LOG(INFO) << "Update " << call.group_call_id << " with " << group_call->participant_count
@@ -4324,7 +4364,7 @@ InputGroupCallId GroupCallManager::update_group_call(const tl_object_ptr<telegra
     *group_call = std::move(call);
 
     need_update = true;
-    if (need_group_call_participants(input_group_call_id, group_call)) {
+    if (need_group_call_participants(group_call)) {
       if (process_pending_group_call_participant_updates(input_group_call_id)) {
         need_update = false;
       }
@@ -4416,7 +4456,7 @@ InputGroupCallId GroupCallManager::update_group_call(const tl_object_ptr<telegra
       }
       if (call.scheduled_start_date != group_call->scheduled_start_date &&
           call.scheduled_start_date_version >= group_call->scheduled_start_date_version) {
-        LOG_IF(ERROR, group_call->scheduled_start_date == 0) << call.group_call_id << " became scheduled";
+        LOG_IF(ERROR, group_call->scheduled_start_date == 0) << input_group_call_id << " became scheduled";
         group_call->scheduled_start_date = call.scheduled_start_date;
         group_call->scheduled_start_date_version = call.scheduled_start_date_version;
         need_update = true;
@@ -4427,8 +4467,7 @@ InputGroupCallId GroupCallManager::update_group_call(const tl_object_ptr<telegra
           on_receive_group_call_version(input_group_call_id, call.version);
         } else {
           need_update |= set_group_call_participant_count(group_call, call.participant_count, "update_group_call");
-          if (need_group_call_participants(input_group_call_id, group_call) && !join_params.empty() &&
-              group_call->version == -1) {
+          if (need_group_call_participants(group_call) && !join_params.empty() && group_call->version == -1) {
             LOG(INFO) << "Init " << call.group_call_id << " version to " << call.version;
             group_call->version = call.version;
             if (process_pending_group_call_participant_updates(input_group_call_id)) {
@@ -4459,7 +4498,7 @@ InputGroupCallId GroupCallManager::update_group_call(const tl_object_ptr<telegra
 void GroupCallManager::on_receive_group_call_version(InputGroupCallId input_group_call_id, int32 version,
                                                      bool immediate_sync) {
   auto *group_call = get_group_call(input_group_call_id);
-  if (!need_group_call_participants(input_group_call_id, group_call)) {
+  if (!need_group_call_participants(group_call)) {
     return;
   }
   CHECK(group_call != nullptr && group_call->is_inited);
@@ -4475,7 +4514,7 @@ void GroupCallManager::on_receive_group_call_version(InputGroupCallId input_grou
 
   // found a gap
   LOG(INFO) << "Receive version " << version << " for group call " << input_group_call_id;
-  auto *group_call_participants = add_group_call_participants(input_group_call_id);
+  auto *group_call_participants = add_group_call_participants(input_group_call_id, "on_receive_group_call_version");
   group_call_participants->pending_version_updates_[version];  // reserve place for updates
   if (immediate_sync) {
     sync_participants_timeout_.set_timeout_in(group_call->group_call_id.get(), 0.0);
@@ -4496,11 +4535,12 @@ void GroupCallManager::on_participant_speaking_in_group_call(InputGroupCallId in
     return;
   }
 
-  on_user_speaking_in_group_call(group_call->group_call_id, participant.dialog_id, active_date, !participant.is_min);
+  on_user_speaking_in_group_call(group_call->group_call_id, participant.dialog_id, participant.server_is_muted_by_admin,
+                                 active_date, !participant.is_min);
 }
 
-void GroupCallManager::on_user_speaking_in_group_call(GroupCallId group_call_id, DialogId dialog_id, int32 date,
-                                                      bool is_recursive) {
+void GroupCallManager::on_user_speaking_in_group_call(GroupCallId group_call_id, DialogId dialog_id,
+                                                      bool is_muted_by_admin, int32 date, bool is_recursive) {
   if (G()->close_flag()) {
     return;
   }
@@ -4514,22 +4554,25 @@ void GroupCallManager::on_user_speaking_in_group_call(GroupCallId group_call_id,
   if (group_call != nullptr && group_call->is_inited && !group_call->is_active) {
     return;
   }
+  if (group_call->has_hidden_listeners && is_muted_by_admin) {
+    return;
+  }
 
-  if (!td_->messages_manager_->have_dialog_info_force(dialog_id) ||
-      (!is_recursive && need_group_call_participants(input_group_call_id, group_call) &&
-       get_group_call_participant(input_group_call_id, dialog_id) == nullptr)) {
+  if (!td_->dialog_manager_->have_dialog_info_force(dialog_id, "on_user_speaking_in_group_call") ||
+      (!is_recursive && need_group_call_participants(group_call) &&
+       get_group_call_participant(input_group_call_id, dialog_id, "on_user_speaking_in_group_call") == nullptr)) {
     if (is_recursive) {
       LOG(ERROR) << "Failed to find speaking " << dialog_id << " from " << input_group_call_id;
     } else {
-      auto query_promise =
-          PromiseCreator::lambda([actor_id = actor_id(this), group_call_id, dialog_id, date](Result<Unit> &&result) {
+      auto query_promise = PromiseCreator::lambda(
+          [actor_id = actor_id(this), group_call_id, dialog_id, is_muted_by_admin, date](Result<Unit> &&result) {
             if (!G()->close_flag() && result.is_ok()) {
-              send_closure(actor_id, &GroupCallManager::on_user_speaking_in_group_call, group_call_id, dialog_id, date,
-                           true);
+              send_closure(actor_id, &GroupCallManager::on_user_speaking_in_group_call, group_call_id, dialog_id,
+                           is_muted_by_admin, date, true);
             }
           });
       vector<tl_object_ptr<telegram_api::InputPeer>> input_peers;
-      input_peers.push_back(MessagesManager::get_input_peer_force(dialog_id));
+      input_peers.push_back(DialogManager::get_input_peer_force(dialog_id));
       td_->create_handler<GetGroupCallParticipantQuery>(std::move(query_promise))
           ->send(input_group_call_id, std::move(input_peers), {});
     }
@@ -4561,7 +4604,7 @@ void GroupCallManager::on_user_speaking_in_group_call(GroupCallId group_call_id,
   for (size_t i = 0; i <= recent_speakers->users.size(); i++) {
     if (i == recent_speakers->users.size() || recent_speakers->users[i].second <= date) {
       if (dialog_id.get_type() != DialogType::User) {
-        td_->messages_manager_->force_create_dialog(dialog_id, "on_user_speaking_in_group_call", true);
+        td_->dialog_manager_->force_create_dialog(dialog_id, "on_user_speaking_in_group_call", true);
       }
       recent_speakers->users.insert(recent_speakers->users.begin() + i, {dialog_id, date});
       break;
@@ -4669,9 +4712,9 @@ bool GroupCallManager::set_group_call_participant_count(GroupCall *group_call, i
   }
 
   bool result = false;
-  if (need_group_call_participants(input_group_call_id, group_call)) {
-    auto known_participant_count =
-        static_cast<int32>(add_group_call_participants(input_group_call_id)->participants.size());
+  if (need_group_call_participants(group_call)) {
+    auto known_participant_count = static_cast<int32>(
+        add_group_call_participants(input_group_call_id, "set_group_call_participant_count")->participants.size());
     if (count < known_participant_count) {
       if (group_call->is_joined) {
         LOG(ERROR) << "Participant count became " << count << " from " << source << ", which is less than known "
@@ -4795,6 +4838,7 @@ vector<td_api::object_ptr<td_api::groupCallRecentSpeaker>> GroupCallManager::get
 
     if (!for_update) {
       // the change must be received through update first
+      LOG(INFO) << "Send update about " << group_call->group_call_id << " from get_recent_speakers";
       send_closure(G()->td(), &Td::send_update, get_update_group_call_object(group_call, get_result()));
     }
   }
@@ -4809,7 +4853,7 @@ tl_object_ptr<td_api::groupCall> GroupCallManager::get_group_call_object(
 
   int32 scheduled_start_date = group_call->scheduled_start_date;
   bool is_active = scheduled_start_date == 0 ? group_call->is_active : false;
-  bool is_joined = group_call->is_joined && !group_call->is_being_left;
+  bool is_joined = get_group_call_is_joined(group_call);
   bool start_subscribed = get_group_call_start_subscribed(group_call);
   bool is_my_video_enabled = get_group_call_is_my_video_enabled(group_call);
   bool is_my_video_paused = is_my_video_enabled && get_group_call_is_my_video_paused(group_call);

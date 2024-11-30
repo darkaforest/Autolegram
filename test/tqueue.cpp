@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -18,6 +18,7 @@
 #include "td/utils/SliceBuilder.h"
 #include "td/utils/Span.h"
 #include "td/utils/tests.h"
+#include "td/utils/Time.h"
 
 #include <memory>
 #include <utility>
@@ -30,7 +31,7 @@ TEST(TQueue, hands) {
   auto qid = 12;
   ASSERT_EQ(true, tqueue->get_head(qid).empty());
   ASSERT_EQ(true, tqueue->get_tail(qid).empty());
-  tqueue->push(qid, "hello", 1, 0, td::TQueue::EventId());
+  tqueue->push(qid, "hello", 1, 0, td::TQueue::EventId()).ignore();
   auto head = tqueue->get_head(qid);
   auto tail = tqueue->get_tail(qid);
   ASSERT_EQ(head.next().ok(), tail);
@@ -65,6 +66,15 @@ class TestTQueue {
     binlog->init(binlog_path().str(), [&](const td::BinlogEvent &event) { UNREACHABLE(); }).ensure();
     tqueue_binlog->set_binlog(std::move(binlog));
     binlog_->set_callback(std::move(tqueue_binlog));
+  }
+
+  TestTQueue(const TestTQueue &) = delete;
+  TestTQueue &operator=(const TestTQueue &) = delete;
+  TestTQueue(TestTQueue &&) = delete;
+  TestTQueue &operator=(TestTQueue &&) = delete;
+
+  ~TestTQueue() {
+    td::Binlog::destroy(binlog_path()).ensure();
   }
 
   void restart(td::Random::Xorshift128plus &rnd, td::int32 now) {
@@ -224,4 +234,27 @@ TEST(TQueue, memory_leak) {
                  << td::BufferAllocator::get_buffer_slice_size();
     }
   }
+}
+
+TEST(TQueue, clear) {
+  auto tqueue = td::TQueue::create();
+
+  auto start_time = td::Time::now();
+  td::int32 now = 0;
+  td::vector<td::TQueue::EventId> ids;
+  td::Random::Xorshift128plus rnd(123);
+  for (size_t i = 0; i < 100000; i++) {
+    tqueue->push(1, td::string(td::Random::fast(100, 500), 'a'), now + 600000, 0, {}).ensure();
+  }
+  auto tail_id = tqueue->get_tail(1);
+  auto clear_start_time = td::Time::now();
+  size_t keep_count = td::Random::fast(0, 2);
+  auto deleted_events = tqueue->clear(1, keep_count);
+  auto finish_time = td::Time::now();
+  LOG(INFO) << "Added TQueue events in " << clear_start_time - start_time << " seconds and cleared them in "
+            << finish_time - clear_start_time << " seconds";
+  CHECK(tqueue->get_size(1) == keep_count);
+  CHECK(tqueue->get_head(1).advance(keep_count).ok() == tail_id);
+  CHECK(tqueue->get_tail(1) == tail_id);
+  CHECK(deleted_events.size() == 100000 - keep_count);
 }

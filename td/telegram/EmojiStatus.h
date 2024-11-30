@@ -1,11 +1,12 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 //
 #pragma once
 
+#include "td/telegram/CustomEmojiId.h"
 #include "td/telegram/td_api.h"
 #include "td/telegram/telegram_api.h"
 
@@ -19,7 +20,7 @@ namespace td {
 class Td;
 
 class EmojiStatus {
-  int64 custom_emoji_id_ = 0;
+  CustomEmojiId custom_emoji_id_;
   int32 until_date_ = 0;
 
   friend bool operator==(const EmojiStatus &lhs, const EmojiStatus &rhs);
@@ -29,7 +30,7 @@ class EmojiStatus {
  public:
   EmojiStatus() = default;
 
-  EmojiStatus(const td_api::object_ptr<td_api::emojiStatus> &emoji_status, int32 duration);
+  explicit EmojiStatus(const td_api::object_ptr<td_api::emojiStatus> &emoji_status);
 
   explicit EmojiStatus(tl_object_ptr<telegram_api::EmojiStatus> &&emoji_status);
 
@@ -37,13 +38,13 @@ class EmojiStatus {
 
   td_api::object_ptr<td_api::emojiStatus> get_emoji_status_object() const;
 
-  int64 get_effective_custom_emoji_id(bool is_premium, int32 unix_time) const;
+  EmojiStatus get_effective_emoji_status(bool is_premium, int32 unix_time) const;
 
   bool is_empty() const {
-    return custom_emoji_id_ == 0;
+    return !custom_emoji_id_.is_valid();
   }
 
-  int64 get_custom_emoji_id() const {
+  CustomEmojiId get_custom_emoji_id() const {
     return custom_emoji_id_;
   }
 
@@ -57,7 +58,7 @@ class EmojiStatus {
 
   template <class StorerT>
   void store(StorerT &storer) const {
-    bool has_custom_emoji_id = custom_emoji_id_ != 0;
+    bool has_custom_emoji_id = custom_emoji_id_.is_valid();
     bool has_until_date = until_date_ != 0;
     BEGIN_STORE_FLAGS();
     STORE_FLAG(has_custom_emoji_id);
@@ -98,7 +99,11 @@ inline bool operator!=(const EmojiStatus &lhs, const EmojiStatus &rhs) {
 
 StringBuilder &operator<<(StringBuilder &string_builder, const EmojiStatus &emoji_status);
 
+td_api::object_ptr<td_api::emojiStatuses> get_emoji_statuses_object(const vector<CustomEmojiId> &custom_emoji_ids);
+
 void get_default_emoji_statuses(Td *td, Promise<td_api::object_ptr<td_api::emojiStatuses>> &&promise);
+
+void get_default_channel_emoji_statuses(Td *td, Promise<td_api::object_ptr<td_api::emojiStatuses>> &&promise);
 
 void get_recent_emoji_statuses(Td *td, Promise<td_api::object_ptr<td_api::emojiStatuses>> &&promise);
 

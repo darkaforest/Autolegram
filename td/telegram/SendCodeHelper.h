@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -12,7 +12,6 @@
 #include "td/utils/common.h"
 #include "td/utils/Slice.h"
 #include "td/utils/Status.h"
-#include "td/utils/Time.h"
 
 namespace td {
 
@@ -26,12 +25,16 @@ class SendCodeHelper {
 
   td_api::object_ptr<td_api::authenticationCodeInfo> get_authentication_code_info_object() const;
 
-  Result<telegram_api::auth_resendCode> resend_code() const;
+  Result<telegram_api::auth_resendCode> resend_code(td_api::object_ptr<td_api::ResendCodeReason> &&reason) const;
 
   using Settings = td_api::object_ptr<td_api::phoneNumberAuthenticationSettings>;
 
   telegram_api::auth_sendCode send_code(string phone_number, const Settings &settings, int32 api_id,
                                         const string &api_hash);
+
+  telegram_api::auth_requestFirebaseSms request_firebase_sms(const string &token);
+
+  telegram_api::auth_reportMissingCode report_missing_code(const string &mobile_network_code);
 
   telegram_api::account_sendVerifyEmailCode send_verify_email_code(const string &email_address);
 
@@ -57,19 +60,35 @@ class SendCodeHelper {
   void parse(ParserT &parser);
 
  private:
-  static constexpr int32 SENT_CODE_FLAG_IS_USER_REGISTERED = 1 << 0;
-  static constexpr int32 SENT_CODE_FLAG_HAS_NEXT_TYPE = 1 << 1;
-  static constexpr int32 SENT_CODE_FLAG_HAS_TIMEOUT = 1 << 2;
-
   struct AuthenticationCodeInfo {
-    enum class Type : int32 { None, Message, Sms, Call, FlashCall, MissedCall };
+    enum class Type : int32 {
+      None,
+      Message,
+      Sms,
+      Call,
+      FlashCall,
+      MissedCall,
+      Fragment,
+      FirebaseAndroidSafetyNet,
+      FirebaseIos,
+      SmsWord,
+      SmsPhrase,
+      FirebaseAndroidPlayIntegrity
+    };
     Type type = Type::None;
     int32 length = 0;
+    int32 push_timeout = 0;
+    int64 cloud_project_number = 0;
     string pattern;
 
     AuthenticationCodeInfo() = default;
-    AuthenticationCodeInfo(Type type, int length, string pattern)
-        : type(type), length(length), pattern(std::move(pattern)) {
+    AuthenticationCodeInfo(Type type, int32 length, string pattern, int32 push_timeout = 0,
+                           int64 cloud_project_number = 0)
+        : type(type)
+        , length(length)
+        , push_timeout(push_timeout)
+        , cloud_project_number(cloud_project_number)
+        , pattern(std::move(pattern)) {
     }
 
     template <class StorerT>

@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -251,9 +251,25 @@ unique_ptr<NotificationSound> get_notification_sound(telegram_api::NotificationS
   }
 }
 
+unique_ptr<NotificationSound> get_notification_sound(telegram_api::peerNotifySettings *settings, bool for_stories) {
+  CHECK(settings != nullptr);
+  telegram_api::NotificationSound *sound =
+#if TD_ANDROID
+      for_stories ? settings->stories_android_sound_.get() : settings->android_sound_.get();
+#elif TD_DARWIN_IOS || TD_DARWIN_TV_OS || TD_DARWIN_VISION_OS || TD_DARWIN_WATCH_OS || TD_DARWIN_UNKNOWN
+      for_stories ? settings->stories_ios_sound_.get() : settings->ios_sound_.get();
+#else
+      for_stories ? settings->stories_other_sound_.get() : settings->other_sound_.get();
+#endif
+  return get_notification_sound(sound);
+}
+
 telegram_api::object_ptr<telegram_api::NotificationSound> get_input_notification_sound(
-    const unique_ptr<NotificationSound> &notification_sound) {
+    const unique_ptr<NotificationSound> &notification_sound, bool return_non_null) {
   if (notification_sound == nullptr) {
+    if (return_non_null) {
+      return telegram_api::make_object<telegram_api::notificationSoundDefault>();
+    }
     return nullptr;
   }
 

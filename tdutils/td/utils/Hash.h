@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -15,7 +15,7 @@
 #include <utility>
 
 namespace td {
-// A simple wrapper for absl::flat_hash_map, std::unordered_map and probably some our implementaion of hash map in
+// A simple wrapper for absl::flat_hash_map, std::unordered_map and probably some our implementation of hash map in
 // the future
 
 // We will introduce out own Hashing utility like an absl one.
@@ -56,6 +56,9 @@ class TdHash {
 #if TD_HAVE_ABSL
 template <class T>
 using AbslHash = absl::Hash<T>;
+#else
+template <class T>
+using AbslHash = TdHash<T>;
 #endif
 
 // default hash implementations
@@ -63,13 +66,5 @@ template <class H, class T>
 decltype(H::combine(std::declval<H>(), std::declval<T>())) AbslHashValue(H hasher, const T &value) {
   return H::combine(std::move(hasher), value);
 }
-
-#if TD_HAVE_ABSL
-template <class T>
-using Hash = AbslHash<T>;
-#else
-template <class T>
-using Hash = TdHash<T>;
-#endif
 
 }  // namespace td

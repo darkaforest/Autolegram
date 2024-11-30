@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -30,10 +30,10 @@ class EventPromise final : public PromiseInterface<Unit> {
     do_set_error();
   }
 
-  EventPromise(const EventPromise &other) = delete;
-  EventPromise &operator=(const EventPromise &other) = delete;
-  EventPromise(EventPromise &&other) = delete;
-  EventPromise &operator=(EventPromise &&other) = delete;
+  EventPromise(const EventPromise &) = delete;
+  EventPromise &operator=(const EventPromise &) = delete;
+  EventPromise(EventPromise &&) = delete;
+  EventPromise &operator=(EventPromise &&) = delete;
   ~EventPromise() final {
     do_set_error();
   }
@@ -95,8 +95,8 @@ class PromiseActor final : public PromiseInterface<T> {
 
  public:
   PromiseActor() = default;
-  PromiseActor(const PromiseActor &other) = delete;
-  PromiseActor &operator=(const PromiseActor &other) = delete;
+  PromiseActor(const PromiseActor &) = delete;
+  PromiseActor &operator=(const PromiseActor &) = delete;
   PromiseActor(PromiseActor &&) = default;
   PromiseActor &operator=(PromiseActor &&) = default;
   ~PromiseActor() final {
@@ -156,11 +156,11 @@ class FutureActor final : public Actor {
 
   FutureActor() = default;
 
-  FutureActor(const FutureActor &other) = delete;
-  FutureActor &operator=(const FutureActor &other) = delete;
+  FutureActor(const FutureActor &) = delete;
+  FutureActor &operator=(const FutureActor &) = delete;
 
-  FutureActor(FutureActor &&other) = default;
-  FutureActor &operator=(FutureActor &&other) = default;
+  FutureActor(FutureActor &&) = default;
+  FutureActor &operator=(FutureActor &&) = default;
 
   ~FutureActor() final = default;
 
@@ -291,12 +291,20 @@ class PromiseFuture {
   FutureActor<T> future_;
 };
 
-template <ActorSendType send_type, class T, class ActorAT, class ActorBT, class ResultT, class... DestArgsT,
-          class... ArgsT>
-FutureActor<T> send_promise(ActorId<ActorAT> actor_id, ResultT (ActorBT::*func)(PromiseActor<T> &&, DestArgsT...),
-                            ArgsT &&...args) {
+template <class T, class ActorAT, class ActorBT, class ResultT, class... DestArgsT, class... ArgsT>
+FutureActor<T> send_promise_immediately(ActorId<ActorAT> actor_id,
+                                        ResultT (ActorBT::*func)(PromiseActor<T> &&, DestArgsT...), ArgsT &&...args) {
   PromiseFuture<T> pf;
-  Scheduler::instance()->send_closure<send_type>(
+  Scheduler::instance()->send_closure_immediately(
+      std::move(actor_id), create_immediate_closure(func, pf.move_promise(), std::forward<ArgsT>(args)...));
+  return pf.move_future();
+}
+
+template <class T, class ActorAT, class ActorBT, class ResultT, class... DestArgsT, class... ArgsT>
+FutureActor<T> send_promise_later(ActorId<ActorAT> actor_id, ResultT (ActorBT::*func)(PromiseActor<T> &&, DestArgsT...),
+                                  ArgsT &&...args) {
+  PromiseFuture<T> pf;
+  Scheduler::instance()->send_closure_later(
       std::move(actor_id), create_immediate_closure(func, pf.move_promise(), std::forward<ArgsT>(args)...));
   return pf.move_future();
 }

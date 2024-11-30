@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -7,6 +7,7 @@
 #pragma once
 
 #include "td/telegram/net/AuthDataShared.h"
+#include "td/telegram/net/AuthKeyState.h"
 #include "td/telegram/net/DcId.h"
 #include "td/telegram/net/NetQuery.h"
 
@@ -52,14 +53,15 @@ class DcAuthManager final : public NetQueryCallback {
   DcId main_dc_id_;
   bool need_check_authorization_is_ok_{false};
   bool close_flag_{false};
-  Promise<> destroy_promise_;
+  bool need_destroy_auth_key_{false};
+  Promise<Unit> destroy_promise_;
 
   DcInfo &get_dc(int32 dc_id);
   DcInfo *find_dc(int32 dc_id);
 
   void update_auth_key_state();
 
-  void on_result(NetQueryPtr result) final;
+  void on_result(NetQueryPtr net_query) final;
   void dc_loop(DcInfo &dc);
 
   void destroy_loop();

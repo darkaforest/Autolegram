@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -22,8 +22,8 @@ namespace td {
 PublicRsaKeyWatchdog::PublicRsaKeyWatchdog(ActorShared<> parent) : parent_(std::move(parent)) {
 }
 
-void PublicRsaKeyWatchdog::add_public_rsa_key(std::shared_ptr<PublicRsaKeyShared> key) {
-  class Listener final : public PublicRsaKeyShared::Listener {
+void PublicRsaKeyWatchdog::add_public_rsa_key(std::shared_ptr<PublicRsaKeySharedCdn> key) {
+  class Listener final : public PublicRsaKeySharedCdn::Listener {
    public:
     explicit Listener(ActorId<PublicRsaKeyWatchdog> parent) : parent_(std::move(parent)) {
     }
@@ -61,8 +61,9 @@ void PublicRsaKeyWatchdog::loop() {
   if (has_query_) {
     return;
   }
-  if (Time::now_cached() < flood_control_.get_wakeup_at()) {
-    set_timeout_in(flood_control_.get_wakeup_at() - Time::now_cached() + 0.01);
+  auto now = Time::now();
+  if (now < flood_control_.get_wakeup_at()) {
+    set_timeout_at(flood_control_.get_wakeup_at() + 0.01);
     return;
   }
   bool ok = true;
@@ -74,7 +75,7 @@ void PublicRsaKeyWatchdog::loop() {
   if (ok) {
     return;
   }
-  flood_control_.add_event(static_cast<int32>(Time::now_cached()));
+  flood_control_.add_event(now);
   has_query_ = true;
   auto query = G()->net_query_creator().create(telegram_api::help_getCdnConfig());
   query->total_timeout_limit_ = 60 * 60 * 24;
@@ -118,7 +119,7 @@ void PublicRsaKeyWatchdog::sync(BufferSlice cdn_config_serialized) {
   }
 }
 
-void PublicRsaKeyWatchdog::sync_key(std::shared_ptr<PublicRsaKeyShared> &key) {
+void PublicRsaKeyWatchdog::sync_key(std::shared_ptr<PublicRsaKeySharedCdn> &key) {
   if (!cdn_config_) {
     return;
   }

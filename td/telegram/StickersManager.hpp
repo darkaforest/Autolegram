@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -11,9 +11,9 @@
 #include "td/telegram/files/FileId.hpp"
 #include "td/telegram/misc.h"
 #include "td/telegram/PhotoSize.hpp"
+#include "td/telegram/PhotoSizeType.h"
 #include "td/telegram/StickerFormat.h"
-#include "td/telegram/StickersManager.h"
-#include "td/telegram/Td.h"
+#include "td/telegram/StickerMaskPosition.hpp"
 
 #include "td/utils/emoji.h"
 #include "td/utils/logging.h"
@@ -47,6 +47,7 @@ void StickersManager::store_sticker(FileId file_id, bool in_sticker_set, StorerT
   STORE_FLAG(is_emoji);
   STORE_FLAG(sticker->is_premium_);
   STORE_FLAG(has_emoji_receive_date);
+  STORE_FLAG(sticker->has_text_color_);
   END_STORE_FLAGS();
   if (!in_sticker_set) {
     store(sticker->set_id_.get(), storer);
@@ -62,10 +63,7 @@ void StickersManager::store_sticker(FileId file_id, bool in_sticker_set, StorerT
   store(sticker->m_thumbnail_, storer);
   store(file_id, storer);
   if (is_mask) {
-    store(sticker->point_, storer);
-    store(sticker->x_shift_, storer);
-    store(sticker->y_shift_, storer);
-    store(sticker->scale_, storer);
+    store(sticker->mask_position_, storer);
   }
   if (has_minithumbnail) {
     store(sticker->minithumbnail_, storer);
@@ -105,6 +103,7 @@ FileId StickersManager::parse_sticker(bool in_sticker_set, ParserT &parser) {
   PARSE_FLAG(is_emoji);
   PARSE_FLAG(sticker->is_premium_);
   PARSE_FLAG(has_emoji_receive_date);
+  PARSE_FLAG(sticker->has_text_color_);
   END_PARSE_FLAGS();
   if (is_webm) {
     sticker->format_ = StickerFormat::Webm;
@@ -147,10 +146,7 @@ FileId StickersManager::parse_sticker(bool in_sticker_set, ParserT &parser) {
   add_sticker_thumbnail(sticker.get(), thumbnail);
   parse(sticker->file_id_, parser);
   if (is_mask) {
-    parse(sticker->point_, parser);
-    parse(sticker->x_shift_, parser);
-    parse(sticker->y_shift_, parser);
-    parse(sticker->scale_, parser);
+    parse(sticker->mask_position_, parser);
   }
   if (has_minithumbnail) {
     parse(sticker->minithumbnail_, parser);
@@ -181,29 +177,36 @@ void StickersManager::store_sticker_set(const StickerSet *sticker_set, bool with
   bool has_expires_at = !sticker_set->is_installed_ && sticker_set->expires_at_ != 0;
   bool has_thumbnail = sticker_set->thumbnail_.file_id.is_valid();
   bool has_minithumbnail = !sticker_set->minithumbnail_.empty();
-  bool is_tgs = sticker_set->sticker_format_ == StickerFormat::Tgs;
-  bool is_webm = sticker_set->sticker_format_ == StickerFormat::Webm;
   bool is_masks = sticker_set->sticker_type_ == StickerType::Mask;
   bool is_emojis = sticker_set->sticker_type_ == StickerType::CustomEmoji;
   bool has_thumbnail_document_id = sticker_set->thumbnail_document_id_ != 0;
+  bool is_mixed_format = true;
   BEGIN_STORE_FLAGS();
   STORE_FLAG(sticker_set->is_inited_);
   STORE_FLAG(was_loaded);
   STORE_FLAG(is_loaded);
   STORE_FLAG(sticker_set->is_installed_);
   STORE_FLAG(sticker_set->is_archived_);
-  STORE_FLAG(sticker_set->is_official_);
+  STORE_FLAG(sticker_set->is_official_);  // 5
   STORE_FLAG(is_masks);
   STORE_FLAG(sticker_set->is_viewed_);
   STORE_FLAG(has_expires_at);
   STORE_FLAG(has_thumbnail);
-  STORE_FLAG(sticker_set->is_thumbnail_reloaded_);
-  STORE_FLAG(is_tgs);
+  STORE_FLAG(sticker_set->is_thumbnail_reloaded_);  // 10
+  STORE_FLAG(false);
   STORE_FLAG(sticker_set->are_legacy_sticker_thumbnails_reloaded_);
   STORE_FLAG(has_minithumbnail);
-  STORE_FLAG(is_webm);
-  STORE_FLAG(is_emojis);
+  STORE_FLAG(false);
+  STORE_FLAG(is_emojis);  // 15
   STORE_FLAG(has_thumbnail_document_id);
+  STORE_FLAG(sticker_set->are_keywords_loaded_);
+  STORE_FLAG(sticker_set->is_sticker_has_text_color_loaded_);
+  STORE_FLAG(sticker_set->has_text_color_);
+  STORE_FLAG(sticker_set->is_sticker_channel_emoji_status_loaded_);  // 20
+  STORE_FLAG(sticker_set->channel_emoji_status_);
+  STORE_FLAG(is_mixed_format);
+  STORE_FLAG(sticker_set->is_created_);
+  STORE_FLAG(sticker_set->is_created_loaded_);
   END_STORE_FLAGS();
   store(sticker_set->id_.get(), storer);
   store(sticker_set->access_hash_, storer);
@@ -239,6 +242,14 @@ void StickersManager::store_sticker_set(const StickerSet *sticker_set, bool with
           store(vector<string>(), storer);
         }
       }
+      if (sticker_set->are_keywords_loaded_) {
+        auto it = sticker_set->sticker_keywords_map_.find(sticker_id);
+        if (it != sticker_set->sticker_keywords_map_.end()) {
+          store(it->second, storer);
+        } else {
+          store(vector<string>(), storer);
+        }
+      }
     }
   }
 }
@@ -254,11 +265,16 @@ void StickersManager::parse_sticker_set(StickerSet *sticker_set, ParserT &parser
   bool is_masks;
   bool has_expires_at;
   bool has_thumbnail;
-  bool is_tgs;
+  bool legacy_is_tgs;
   bool has_minithumbnail;
-  bool is_webm;
+  bool legacy_is_webm;
   bool is_emojis;
   bool has_thumbnail_document_id;
+  bool has_text_color;
+  bool channel_emoji_status;
+  bool is_mixed_format;
+  bool is_created;
+  bool is_created_loaded;
   BEGIN_PARSE_FLAGS();
   PARSE_FLAG(sticker_set->is_inited_);
   PARSE_FLAG(sticker_set->was_loaded_);
@@ -271,29 +287,35 @@ void StickersManager::parse_sticker_set(StickerSet *sticker_set, ParserT &parser
   PARSE_FLAG(has_expires_at);
   PARSE_FLAG(has_thumbnail);
   PARSE_FLAG(sticker_set->is_thumbnail_reloaded_);
-  PARSE_FLAG(is_tgs);
+  PARSE_FLAG(legacy_is_tgs);
   PARSE_FLAG(sticker_set->are_legacy_sticker_thumbnails_reloaded_);
   PARSE_FLAG(has_minithumbnail);
-  PARSE_FLAG(is_webm);
+  PARSE_FLAG(legacy_is_webm);
   PARSE_FLAG(is_emojis);
   PARSE_FLAG(has_thumbnail_document_id);
+  PARSE_FLAG(sticker_set->are_keywords_loaded_);
+  PARSE_FLAG(sticker_set->is_sticker_has_text_color_loaded_);
+  PARSE_FLAG(has_text_color);
+  PARSE_FLAG(sticker_set->is_sticker_channel_emoji_status_loaded_);
+  PARSE_FLAG(channel_emoji_status);
+  PARSE_FLAG(is_mixed_format);
+  PARSE_FLAG(is_created);
+  PARSE_FLAG(is_created_loaded);
   END_PARSE_FLAGS();
   int64 sticker_set_id;
   int64 access_hash;
   parse(sticker_set_id, parser);
   parse(access_hash, parser);
-  CHECK(sticker_set->id_.get() == sticker_set_id);
+  if (sticker_set->id_.get() != sticker_set_id) {
+    return parser.set_error("Invalid sticker set data stored in the database");
+  }
   (void)access_hash;  // unused, because only known sticker sets with access hash can be loaded from database
 
-  StickerFormat sticker_format = StickerFormat::Unknown;
-  if (is_webm) {
-    sticker_format = StickerFormat::Webm;
-  } else if (is_tgs) {
-    sticker_format = StickerFormat::Tgs;
-  } else {
-    sticker_format = StickerFormat::Webp;
-  }
   auto sticker_type = ::td::get_sticker_type(is_masks, is_emojis);
+  if (!is_emojis) {
+    sticker_set->is_sticker_has_text_color_loaded_ = true;
+    sticker_set->is_sticker_channel_emoji_status_loaded_ = true;
+  }
 
   if (sticker_set->is_inited_) {
     string title;
@@ -320,7 +342,15 @@ void StickersManager::parse_sticker_set(StickerSet *sticker_set, ParserT &parser
     if (has_thumbnail_document_id) {
       parse(thumbnail_document_id, parser);
     }
-
+    if (!is_mixed_format && thumbnail.file_id.is_valid()) {
+      if (legacy_is_webm) {
+        thumbnail.type = PhotoSizeType('v');
+      } else if (legacy_is_tgs) {
+        thumbnail.type = PhotoSizeType('a');
+      } else {
+        thumbnail.type = PhotoSizeType('s');
+      }
+    }
     if (!was_inited) {
       sticker_set->title_ = std::move(title);
       sticker_set->short_name_ = std::move(short_name);
@@ -332,7 +362,10 @@ void StickersManager::parse_sticker_set(StickerSet *sticker_set, ParserT &parser
       sticker_set->expires_at_ = expires_at;
       sticker_set->is_official_ = is_official;
       sticker_set->sticker_type_ = sticker_type;
-      sticker_set->sticker_format_ = sticker_format;
+      sticker_set->has_text_color_ = has_text_color;
+      sticker_set->channel_emoji_status_ = channel_emoji_status;
+      sticker_set->is_created_ = is_created;
+      sticker_set->is_created_loaded_ = is_created_loaded;
 
       auto cleaned_username = clean_username(sticker_set->short_name_);
       if (!cleaned_username.empty()) {
@@ -340,19 +373,21 @@ void StickersManager::parse_sticker_set(StickerSet *sticker_set, ParserT &parser
       }
       on_update_sticker_set(sticker_set, is_installed, is_archived, false, true);
     } else {
-      if (sticker_set->title_ != title) {
-        LOG(INFO) << "Title of " << sticker_set->id_ << " has changed";
+      if (sticker_set->title_ != title || sticker_set->minithumbnail_ != minithumbnail ||
+          sticker_set->thumbnail_ != thumbnail || sticker_set->thumbnail_document_id_ != thumbnail_document_id ||
+          sticker_set->is_official_ != is_official || sticker_set->has_text_color_ != has_text_color ||
+          sticker_set->channel_emoji_status_ != channel_emoji_status || sticker_set->is_created_ != is_created ||
+          sticker_set->is_created_loaded_ != is_created_loaded) {
+        sticker_set->is_changed_ = true;
       }
       if (sticker_set->short_name_ != short_name) {
-        LOG(ERROR) << "Short name of " << sticker_set->id_ << " has changed from \"" << short_name << "\" to \""
-                   << sticker_set->short_name_ << "\"";
+        LOG(INFO) << "Short name of " << sticker_set->id_ << " has changed from \"" << short_name << "\" to \""
+                  << sticker_set->short_name_ << "\"";
+        sticker_set->is_changed_ = true;
       }
-      if (sticker_set->sticker_count_ != sticker_count || sticker_set->hash_ != hash) {
+      if (sticker_set->is_loaded_ && (sticker_set->sticker_count_ != sticker_count || sticker_set->hash_ != hash)) {
         sticker_set->is_loaded_ = false;
-      }
-      if (sticker_set->sticker_format_ != sticker_format) {
-        LOG(ERROR) << "Sticker format of " << sticker_set->id_ << " has changed from \"" << sticker_format << "\" to \""
-                   << sticker_set->sticker_format_ << "\"";
+        sticker_set->is_changed_ = true;
       }
       if (sticker_set->sticker_type_ != sticker_type) {
         LOG(ERROR) << "Type of " << sticker_set->id_ << " has changed from \"" << sticker_type << "\" to \""
@@ -367,6 +402,8 @@ void StickersManager::parse_sticker_set(StickerSet *sticker_set, ParserT &parser
     if (sticker_set->was_loaded_) {
       sticker_set->emoji_stickers_map_.clear();
       sticker_set->sticker_emojis_map_.clear();
+      sticker_set->keyword_stickers_map_.clear();
+      sticker_set->sticker_keywords_map_.clear();
     }
     for (uint32 i = 0; i < stored_sticker_count; i++) {
       auto sticker_id = parse_sticker(true, parser);
@@ -383,6 +420,9 @@ void StickersManager::parse_sticker_set(StickerSet *sticker_set, ParserT &parser
       if (sticker->set_id_ != sticker_set->id_) {
         LOG_IF(ERROR, sticker->set_id_.is_valid()) << "Sticker " << sticker_id << " set_id has changed";
         sticker->set_id_ = sticker_set->id_;
+        if (sticker->has_text_color_) {
+          sticker_set->has_text_color_ = true;
+        }
       }
       if (sticker->is_premium_) {
         sticker_set->premium_sticker_positions_.push_back(static_cast<int32>(sticker_set->sticker_ids_.size() - 1));
@@ -404,6 +444,13 @@ void StickersManager::parse_sticker_set(StickerSet *sticker_set, ParserT &parser
           }
         }
         sticker_set->sticker_emojis_map_[sticker_id] = std::move(emojis);
+      }
+      if (sticker_set->are_keywords_loaded_) {
+        vector<string> keywords;
+        parse(keywords, parser);
+        if (!keywords.empty()) {
+          sticker_set->sticker_keywords_map_.emplace(sticker_id, std::move(keywords));
+        }
       }
     }
     if (expires_at > sticker_set->expires_at_) {
@@ -436,108 +483,6 @@ void StickersManager::parse_sticker_set_id(StickerSetId &sticker_set_id, ParserT
   int64 sticker_set_access_hash;
   parse(sticker_set_access_hash, parser);
   add_sticker_set(sticker_set_id, sticker_set_access_hash);
-}
-
-template <class StorerT>
-void StickersManager::Reaction::store(StorerT &storer) const {
-  StickersManager *stickers_manager = storer.context()->td().get_actor_unsafe()->stickers_manager_.get();
-  bool has_around_animation = !around_animation_.empty();
-  bool has_center_animation = !center_animation_.empty();
-  BEGIN_STORE_FLAGS();
-  STORE_FLAG(is_active_);
-  STORE_FLAG(has_around_animation);
-  STORE_FLAG(has_center_animation);
-  STORE_FLAG(is_premium_);
-  END_STORE_FLAGS();
-  td::store(reaction_, storer);
-  td::store(title_, storer);
-  stickers_manager->store_sticker(static_icon_, false, storer, "Reaction");
-  stickers_manager->store_sticker(appear_animation_, false, storer, "Reaction");
-  stickers_manager->store_sticker(select_animation_, false, storer, "Reaction");
-  stickers_manager->store_sticker(activate_animation_, false, storer, "Reaction");
-  stickers_manager->store_sticker(effect_animation_, false, storer, "Reaction");
-  if (has_around_animation) {
-    stickers_manager->store_sticker(around_animation_, false, storer, "Reaction");
-  }
-  if (has_center_animation) {
-    stickers_manager->store_sticker(center_animation_, false, storer, "Reaction");
-  }
-}
-
-template <class ParserT>
-void StickersManager::Reaction::parse(ParserT &parser) {
-  StickersManager *stickers_manager = parser.context()->td().get_actor_unsafe()->stickers_manager_.get();
-  bool has_around_animation;
-  bool has_center_animation;
-  BEGIN_PARSE_FLAGS();
-  PARSE_FLAG(is_active_);
-  PARSE_FLAG(has_around_animation);
-  PARSE_FLAG(has_center_animation);
-  PARSE_FLAG(is_premium_);
-  END_PARSE_FLAGS();
-  td::parse(reaction_, parser);
-  td::parse(title_, parser);
-  static_icon_ = stickers_manager->parse_sticker(false, parser);
-  appear_animation_ = stickers_manager->parse_sticker(false, parser);
-  select_animation_ = stickers_manager->parse_sticker(false, parser);
-  activate_animation_ = stickers_manager->parse_sticker(false, parser);
-  effect_animation_ = stickers_manager->parse_sticker(false, parser);
-  if (has_around_animation) {
-    around_animation_ = stickers_manager->parse_sticker(false, parser);
-  }
-  if (has_center_animation) {
-    center_animation_ = stickers_manager->parse_sticker(false, parser);
-  }
-
-  is_premium_ = false;
-}
-
-template <class StorerT>
-void StickersManager::Reactions::store(StorerT &storer) const {
-  bool has_reactions = !reactions_.empty();
-  BEGIN_STORE_FLAGS();
-  STORE_FLAG(has_reactions);
-  END_STORE_FLAGS();
-  if (has_reactions) {
-    td::store(reactions_, storer);
-    td::store(hash_, storer);
-  }
-}
-
-template <class ParserT>
-void StickersManager::Reactions::parse(ParserT &parser) {
-  bool has_reactions;
-  BEGIN_PARSE_FLAGS();
-  PARSE_FLAG(has_reactions);
-  END_PARSE_FLAGS();
-  if (has_reactions) {
-    td::parse(reactions_, parser);
-    td::parse(hash_, parser);
-  }
-}
-
-template <class StorerT>
-void StickersManager::ReactionList::store(StorerT &storer) const {
-  bool has_reactions = !reactions_.empty();
-  BEGIN_STORE_FLAGS();
-  STORE_FLAG(has_reactions);
-  END_STORE_FLAGS();
-  if (has_reactions) {
-    td::store(reactions_, storer);
-    td::store(hash_, storer);
-  }
-}
-
-template <class ParserT>
-void StickersManager::ReactionList::parse(ParserT &parser) {
-  bool has_reactions;
-  BEGIN_PARSE_FLAGS();
-  PARSE_FLAG(has_reactions);
-  END_PARSE_FLAGS();
-  if (has_reactions) {
-    td::parse(reactions_, parser);
-    td::parse(hash_, parser);
-  }
 }
 
 }  // namespace td

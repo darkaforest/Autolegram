@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -110,7 +110,7 @@ inline string Actor::set_tag(string tag) {
   return old_tag;
 }
 
-inline void Actor::init(ObjectPool<ActorInfo>::OwnerPtr &&info) {
+inline void Actor::set_info(ObjectPool<ActorInfo>::OwnerPtr &&info) {
   info_ = std::move(info);
 }
 
@@ -156,16 +156,12 @@ auto Actor::self_closure(SelfT *self, FuncT &&func, ArgsT &&...args) {
 }
 
 template <class LambdaT>
-auto Actor::self_lambda(LambdaT &&lambda) {
-  return EventCreator::lambda(actor_id(), std::forward<LambdaT>(lambda));
+auto Actor::self_lambda(LambdaT &&func) {
+  return EventCreator::from_lambda(actor_id(), std::forward<LambdaT>(func));
 }
 
 inline Slice Actor::get_name() const {
   return info_->get_name();
-}
-
-inline void Actor::always_wait_for_mailbox() {
-  info_->always_wait_for_mailbox();
 }
 
 }  // namespace td

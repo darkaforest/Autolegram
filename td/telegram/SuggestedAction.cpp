@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -8,13 +8,14 @@
 
 #include "td/telegram/ChannelId.h"
 #include "td/telegram/ConfigManager.h"
-#include "td/telegram/ContactsManager.h"
+#include "td/telegram/DialogManager.h"
 #include "td/telegram/Global.h"
 #include "td/telegram/Td.h"
 
 #include "td/actor/actor.h"
 
 #include "td/utils/algorithm.h"
+#include "td/utils/logging.h"
 #include "td/utils/misc.h"
 #include "td/utils/Status.h"
 
@@ -35,6 +36,22 @@ SuggestedAction::SuggestedAction(Slice action_str) {
     init(Type::CheckPhoneNumber);
   } else if (action_str == Slice("NEWCOMER_TICKS")) {
     init(Type::ViewChecksHint);
+  } else if (action_str == Slice("SETUP_PASSWORD")) {
+    init(Type::SetPassword);
+  } else if (action_str == Slice("PREMIUM_UPGRADE")) {
+    init(Type::UpgradePremium);
+  } else if (action_str == Slice("PREMIUM_ANNUAL")) {
+    init(Type::SubscribeToAnnualPremium);
+  } else if (action_str == Slice("PREMIUM_RESTORE")) {
+    init(Type::RestorePremium);
+  } else if (action_str == Slice("PREMIUM_CHRISTMAS")) {
+    init(Type::GiftPremiumForChristmas);
+  } else if (action_str == Slice("BIRTHDAY_SETUP")) {
+    init(Type::BirthdaySetup);
+  } else if (action_str == Slice("PREMIUM_GRACE")) {
+    init(Type::PremiumGrace);
+  } else if (action_str == Slice("STARS_SUBSCRIPTION_LOW_BALANCE")) {
+    init(Type::StarsSubscriptionLowBalance);
   }
 }
 
@@ -78,6 +95,27 @@ SuggestedAction::SuggestedAction(const td_api::object_ptr<td_api::SuggestedActio
       otherwise_relogin_days_ = action->authorization_delay_;
       break;
     }
+    case td_api::suggestedActionUpgradePremium::ID:
+      init(Type::UpgradePremium);
+      break;
+    case td_api::suggestedActionSubscribeToAnnualPremium::ID:
+      init(Type::SubscribeToAnnualPremium);
+      break;
+    case td_api::suggestedActionRestorePremium::ID:
+      init(Type::RestorePremium);
+      break;
+    case td_api::suggestedActionGiftPremiumForChristmas::ID:
+      init(Type::GiftPremiumForChristmas);
+      break;
+    case td_api::suggestedActionSetBirthdate::ID:
+      init(Type::BirthdaySetup);
+      break;
+    case td_api::suggestedActionExtendPremium::ID:
+      init(Type::PremiumGrace);
+      break;
+    case td_api::suggestedActionExtendStarSubscriptions::ID:
+      init(Type::StarsSubscriptionLowBalance);
+      break;
     default:
       UNREACHABLE();
   }
@@ -95,6 +133,22 @@ string SuggestedAction::get_suggested_action_str() const {
       return "NEWCOMER_TICKS";
     case Type::ConvertToGigagroup:
       return "CONVERT_GIGAGROUP";
+    case Type::SetPassword:
+      return "SETUP_PASSWORD";
+    case Type::UpgradePremium:
+      return "PREMIUM_UPGRADE";
+    case Type::SubscribeToAnnualPremium:
+      return "PREMIUM_ANNUAL";
+    case Type::RestorePremium:
+      return "PREMIUM_RESTORE";
+    case Type::GiftPremiumForChristmas:
+      return "PREMIUM_CHRISTMAS";
+    case Type::BirthdaySetup:
+      return "BIRTHDAY_SETUP";
+    case Type::PremiumGrace:
+      return "PREMIUM_GRACE";
+    case Type::StarsSubscriptionLowBalance:
+      return "STARS_SUBSCRIPTION_LOW_BALANCE";
     default:
       return string();
   }
@@ -116,6 +170,21 @@ td_api::object_ptr<td_api::SuggestedAction> SuggestedAction::get_suggested_actio
       return td_api::make_object<td_api::suggestedActionConvertToBroadcastGroup>(dialog_id_.get_channel_id().get());
     case Type::SetPassword:
       return td_api::make_object<td_api::suggestedActionSetPassword>(otherwise_relogin_days_);
+    case Type::UpgradePremium:
+      return td_api::make_object<td_api::suggestedActionUpgradePremium>();
+    case Type::SubscribeToAnnualPremium:
+      return td_api::make_object<td_api::suggestedActionSubscribeToAnnualPremium>();
+    case Type::RestorePremium:
+      return td_api::make_object<td_api::suggestedActionRestorePremium>();
+    case Type::GiftPremiumForChristmas:
+      return td_api::make_object<td_api::suggestedActionGiftPremiumForChristmas>();
+    case Type::BirthdaySetup:
+      return td_api::make_object<td_api::suggestedActionSetBirthdate>();
+    case Type::PremiumGrace:
+      return td_api::make_object<td_api::suggestedActionExtendPremium>(
+          G()->get_option_string("premium_manage_subscription_url", "https://t.me/premiumbot?start=status"));
+    case Type::StarsSubscriptionLowBalance:
+      return td_api::make_object<td_api::suggestedActionExtendStarSubscriptions>();
     default:
       UNREACHABLE();
       return nullptr;
@@ -123,7 +192,8 @@ td_api::object_ptr<td_api::SuggestedAction> SuggestedAction::get_suggested_actio
 }
 
 td_api::object_ptr<td_api::updateSuggestedActions> get_update_suggested_actions_object(
-    const vector<SuggestedAction> &added_actions, const vector<SuggestedAction> &removed_actions) {
+    const vector<SuggestedAction> &added_actions, const vector<SuggestedAction> &removed_actions, const char *source) {
+  LOG(INFO) << "Get updateSuggestedActions from " << source;
   auto get_object = [](const SuggestedAction &action) {
     return action.get_suggested_action_object();
   };
@@ -131,11 +201,11 @@ td_api::object_ptr<td_api::updateSuggestedActions> get_update_suggested_actions_
                                                              transform(removed_actions, get_object));
 }
 
-void update_suggested_actions(vector<SuggestedAction> &suggested_actions,
+bool update_suggested_actions(vector<SuggestedAction> &suggested_actions,
                               vector<SuggestedAction> &&new_suggested_actions) {
   td::unique(new_suggested_actions);
   if (new_suggested_actions == suggested_actions) {
-    return;
+    return false;
   }
 
   vector<SuggestedAction> added_actions;
@@ -154,13 +224,18 @@ void update_suggested_actions(vector<SuggestedAction> &suggested_actions,
   }
   CHECK(!added_actions.empty() || !removed_actions.empty());
   suggested_actions = std::move(new_suggested_actions);
-  send_closure(G()->td(), &Td::send_update, get_update_suggested_actions_object(added_actions, removed_actions));
+  send_closure(G()->td(), &Td::send_update,
+               get_update_suggested_actions_object(added_actions, removed_actions, "update_suggested_actions"));
+  return true;
 }
 
-void remove_suggested_action(vector<SuggestedAction> &suggested_actions, SuggestedAction suggested_action) {
+bool remove_suggested_action(vector<SuggestedAction> &suggested_actions, SuggestedAction suggested_action) {
   if (td::remove(suggested_actions, suggested_action)) {
-    send_closure(G()->td(), &Td::send_update, get_update_suggested_actions_object({}, {suggested_action}));
+    send_closure(G()->td(), &Td::send_update,
+                 get_update_suggested_actions_object({}, {suggested_action}, "remove_suggested_action"));
+    return true;
   }
+  return false;
 }
 
 void dismiss_suggested_action(SuggestedAction action, Promise<Unit> &&promise) {
@@ -171,19 +246,31 @@ void dismiss_suggested_action(SuggestedAction action, Promise<Unit> &&promise) {
     case SuggestedAction::Type::CheckPassword:
     case SuggestedAction::Type::CheckPhoneNumber:
     case SuggestedAction::Type::ViewChecksHint:
+    case SuggestedAction::Type::UpgradePremium:
+    case SuggestedAction::Type::SubscribeToAnnualPremium:
+    case SuggestedAction::Type::RestorePremium:
+    case SuggestedAction::Type::GiftPremiumForChristmas:
+    case SuggestedAction::Type::BirthdaySetup:
+    case SuggestedAction::Type::PremiumGrace:
+    case SuggestedAction::Type::StarsSubscriptionLowBalance:
       return send_closure_later(G()->config_manager(), &ConfigManager::dismiss_suggested_action, std::move(action),
                                 std::move(promise));
     case SuggestedAction::Type::ConvertToGigagroup:
-      return send_closure_later(G()->contacts_manager(), &ContactsManager::dismiss_dialog_suggested_action,
+      return send_closure_later(G()->dialog_manager(), &DialogManager::dismiss_dialog_suggested_action,
                                 std::move(action), std::move(promise));
     case SuggestedAction::Type::SetPassword: {
-      if (action.otherwise_relogin_days_ <= 0) {
+      if (action.otherwise_relogin_days_ < 0) {
         return promise.set_error(Status::Error(400, "Invalid authorization_delay specified"));
+      }
+      if (action.otherwise_relogin_days_ == 0) {
+        return send_closure_later(G()->config_manager(), &ConfigManager::dismiss_suggested_action, std::move(action),
+                                  std::move(promise));
       }
       auto days = narrow_cast<int32>(G()->get_option_integer("otherwise_relogin_days"));
       if (days == action.otherwise_relogin_days_) {
         vector<SuggestedAction> removed_actions{SuggestedAction{SuggestedAction::Type::SetPassword, DialogId(), days}};
-        send_closure(G()->td(), &Td::send_update, get_update_suggested_actions_object({}, removed_actions));
+        send_closure(G()->td(), &Td::send_update,
+                     get_update_suggested_actions_object({}, removed_actions, "dismiss_suggested_action"));
         G()->set_option_empty("otherwise_relogin_days");
       }
       return promise.set_value(Unit());

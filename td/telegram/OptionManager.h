@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -31,6 +31,8 @@ class OptionManager {
   OptionManager &operator=(OptionManager &&) = delete;
   ~OptionManager();
 
+  void update_premium_options();
+
   void on_td_inited();
 
   void set_option_boolean(Slice name, bool value);
@@ -55,8 +57,6 @@ class OptionManager {
 
   void set_option(const string &name, td_api::object_ptr<td_api::OptionValue> &&value, Promise<Unit> &&promise);
 
-  void clear_options();
-
   static bool is_synchronous_option(Slice name);
 
   static td_api::object_ptr<td_api::OptionValue> get_option_synchronously(Slice name);
@@ -74,6 +74,8 @@ class OptionManager {
 
   static bool is_internal_option(Slice name);
 
+  td_api::object_ptr<td_api::Update> get_internal_option_update(Slice name) const;
+
   static const vector<Slice> &get_synchronous_options();
 
   static td_api::object_ptr<td_api::OptionValue> get_unix_time_option_value_object();
@@ -86,6 +88,7 @@ class OptionManager {
   bool is_td_inited_ = false;
   vector<std::pair<string, Promise<td_api::object_ptr<td_api::OptionValue>>>> pending_get_options_;
 
+  int32 current_scheduler_id_ = -1;
   unique_ptr<TsSeqKeyValue> options_;
   std::shared_ptr<KeyValueSyncInterface> option_pmc_;
 

@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -11,6 +11,7 @@
 #include "td/telegram/logevent/LogEventHelper.h"
 #include "td/telegram/Td.h"
 #include "td/telegram/TdDb.h"
+#include "td/telegram/telegram_api.h"
 
 #include "td/db/binlog/BinlogEvent.h"
 #include "td/db/binlog/BinlogHelper.h"
@@ -95,7 +96,11 @@ class SaveAppLogLogEvent {
   void parse(ParserT &parser) {
     auto buffer = parser.template fetch_string_raw<BufferSlice>(parser.get_left_len());
     TlBufferParser buffer_parser{&buffer};
-    input_app_event_out_ = telegram_api::make_object<telegram_api::inputAppEvent>(buffer_parser);
+    input_app_event_out_ = telegram_api::inputAppEvent::fetch(buffer_parser);
+    buffer_parser.fetch_end();
+    if (buffer_parser.get_error() != nullptr) {
+      return parser.set_error(buffer_parser.get_error());
+    }
   }
 };
 
@@ -115,7 +120,7 @@ static void save_app_log_impl(Td *td, telegram_api::object_ptr<telegram_api::inp
 void save_app_log(Td *td, const string &type, DialogId dialog_id, tl_object_ptr<telegram_api::JSONValue> &&data,
                   Promise<Unit> &&promise) {
   CHECK(data != nullptr);
-  auto input_app_event = telegram_api::make_object<telegram_api::inputAppEvent>(G()->server_time_cached(), type,
+  auto input_app_event = telegram_api::make_object<telegram_api::inputAppEvent>(G()->server_time(), type,
                                                                                 dialog_id.get(), std::move(data));
   save_app_log_impl(td, std::move(input_app_event), 0, std::move(promise));
 }
@@ -127,7 +132,11 @@ void on_save_app_log_binlog_event(Td *td, BinlogEvent &&event) {
   CHECK(event.id_ != 0);
   CHECK(event.type_ == LogEvent::HandlerType::SaveAppLog);
   SaveAppLogLogEvent log_event;
-  log_event_parse(log_event, event.data_).ensure();
+  if (log_event_parse(log_event, event.get_data()).is_error()) {
+    LOG(ERROR) << "Failed to parse application log event";
+    binlog_erase(G()->td_db()->get_binlog(), event.id_);
+    return;
+  }
 
   save_app_log_impl(td, std::move(log_event.input_app_event_out_), event.id_, Promise<Unit>());
 }

@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -18,6 +18,8 @@ void SendCodeHelper::AuthenticationCodeInfo::store(StorerT &storer) const {
   using td::store;
   store(type, storer);
   store(length, storer);
+  store(push_timeout, storer);
+  store(cloud_project_number, storer);
   store(pattern, storer);
 }
 
@@ -26,6 +28,8 @@ void SendCodeHelper::AuthenticationCodeInfo::parse(ParserT &parser) {
   using td::parse;
   parse(type, parser);
   parse(length, parser);
+  parse(push_timeout, parser);
+  parse(cloud_project_number, parser);
   parse(pattern, parser);
 }
 

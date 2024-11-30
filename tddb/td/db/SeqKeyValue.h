@@ -1,14 +1,14 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 //
 #pragma once
 
+#include "td/utils/common.h"
+#include "td/utils/FlatHashMap.h"
 #include "td/utils/Slice.h"
-
-#include <unordered_map>
 
 namespace td {
 
@@ -23,6 +23,7 @@ class SeqKeyValue {
   ~SeqKeyValue() = default;
 
   SeqNo set(Slice key, Slice value) {
+    CHECK(!key.empty());
     auto it_ok = map_.emplace(key.str(), value.str());
     if (!it_ok.second) {
       if (it_ok.first->second == value) {
@@ -40,6 +41,23 @@ class SeqKeyValue {
     }
     map_.erase(it);
     return next_seq_no();
+  }
+
+  SeqNo erase_batch(vector<string> keys) {
+    size_t count = 0;
+    for (auto &key : keys) {
+      auto it = map_.find(key);
+      if (it != map_.end()) {
+        map_.erase(it);
+        count++;
+      }
+    }
+    if (count == 0) {
+      return 0;
+    }
+    SeqNo result = current_id_ + 1;
+    current_id_ += count;
+    return result;
   }
 
   SeqNo seq_no() const {
@@ -66,13 +84,19 @@ class SeqKeyValue {
     return map_.size();
   }
 
-  std::unordered_map<string, string> get_all() const {
-    return map_;
+  FlatHashMap<string, string> get_all() const {
+    FlatHashMap<string, string> result;
+    result.reserve(map_.size());
+    for (auto &it : map_) {
+      result.emplace(it.first, it.second);
+    }
+    return result;
   }
 
  private:
-  std::unordered_map<string, string> map_;
+  FlatHashMap<string, string> map_;
   SeqNo current_id_ = 0;
+
   SeqNo next_seq_no() {
     return ++current_id_;
   }

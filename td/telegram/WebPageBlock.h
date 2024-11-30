@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -87,6 +87,8 @@ class WebPageBlock {
   virtual void append_file_ids(const Td *td, vector<FileId> &file_ids) const = 0;
 
   virtual td_api::object_ptr<td_api::PageBlock> get_page_block_object(Context *context) const = 0;
+
+  static bool are_allowed_album_block_types(const vector<unique_ptr<WebPageBlock>> &page_blocks);
 };
 
 void store(const unique_ptr<WebPageBlock> &block, LogEventStorerCalcLength &storer);
@@ -102,6 +104,6 @@ vector<unique_ptr<WebPageBlock>> get_web_page_blocks(
     const FlatHashMap<int64, FileId> &videos, const FlatHashMap<int64, FileId> &voice_notes);
 
 vector<td_api::object_ptr<td_api::PageBlock>> get_page_blocks_object(
-    const vector<unique_ptr<WebPageBlock>> &page_blocks, Td *td, Slice base_url);
+    const vector<unique_ptr<WebPageBlock>> &page_blocks, Td *td, Slice base_url, Slice real_url);
 
 }  // namespace td

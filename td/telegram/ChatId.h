@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -9,9 +9,9 @@
 #include "td/telegram/Version.h"
 
 #include "td/utils/common.h"
+#include "td/utils/HashTableUtils.h"
 #include "td/utils/StringBuilder.h"
 
-#include <functional>
 #include <type_traits>
 
 namespace td {
@@ -24,7 +24,7 @@ class ChatId {
 
   ChatId() = default;
 
-  explicit ChatId(int64 chat_id) : id(chat_id) {
+  explicit constexpr ChatId(int64 chat_id) : id(chat_id) {
   }
   template <class T, typename = std::enable_if_t<std::is_convertible<T, int64>::value>>
   ChatId(T chat_id) = delete;
@@ -61,8 +61,8 @@ class ChatId {
 };
 
 struct ChatIdHash {
-  std::size_t operator()(ChatId chat_id) const {
-    return std::hash<int64>()(chat_id.get());
+  uint32 operator()(ChatId chat_id) const {
+    return Hash<int64>()(chat_id.get());
   }
 };
 

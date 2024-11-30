@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -71,7 +71,7 @@ class SecretChatActor final : public NetQueryCallback {
 
     virtual bool close_flag() = 0;
 
-    // We don't want to expose the whole NetQueryDispatcher, MessagesManager and ContactsManager.
+    // We don't want to expose the whole NetQueryDispatcher, MessagesManager and UserManager.
     // So it is more clear which parts of MessagesManager are really used. And it is much easier to create tests.
     virtual void send_net_query(NetQueryPtr query, ActorShared<NetQueryCallback> callback, bool ordered) = 0;
 
@@ -111,13 +111,13 @@ class SecretChatActor final : public NetQueryCallback {
   void cancel_chat(bool delete_history, bool is_already_discarded, Promise<> promise);
 
   // Inbound messages
-  // Logevent is created by SecretChatsManager, because it must contain qts
+  // Logevent is created by SecretChatsManager, because it must contain QTS
   void add_inbound_message(unique_ptr<log_event::InboundSecretMessage> message);
 
   // Outbound messages
-  // Promise will be set just after corresponding log event will be SENT to binlog.
+  // Promise will be set just after corresponding log event is SENT to binlog.
   void send_message(tl_object_ptr<secret_api::DecryptedMessage> message,
-                    tl_object_ptr<telegram_api::InputEncryptedFile> file, Promise<> promise);
+                    telegram_api::object_ptr<telegram_api::InputEncryptedFile> file, Promise<> promise);
   void send_message_action(tl_object_ptr<secret_api::SendMessageAction> action);
   void send_read_history(int32 date,
                          Promise<>);  // no binlog event. TODO: Promise will be set after the net query is sent
@@ -479,13 +479,13 @@ class SecretChatActor final : public NetQueryCallback {
   // This is completly flawed.
   // (A-start_save_to_binlog ----> B-start_save_to_binlog+change_memory ----> A-finish_save_to_binlog+surprise)
   //
-  // Instead I suggest general solution that is already used with SeqNoState and qts
+  // Instead, I suggest general solution that is already used with SeqNoState and QTS
   // 1. We APPLY CHANGE to memory immediately AFTER corresponding EVENT is SENT to the binlog.
   // 2. We SEND CHANGE to database only after corresponding EVENT is SAVED to the binlog.
-  // 3. Then we are able to ERASE EVENT just AFTER the CHANGE is SAVED to the binlog.
+  // 3. Then, we are able to ERASE EVENT just AFTER the CHANGE is SAVED to the binlog.
   //
   // Actually the change will be saved to binlog too.
-  // So we can do it immediatelly after EVENT is SENT to the binlog, because SEND CHANGE and ERASE EVENT will be
+  // So we can do it immediately after EVENT is SENT to the binlog, because SEND CHANGE and ERASE EVENT will be
   // ordered automatically.
   //
   // We will use common ChangesProcessor for all changes (inside one SecretChatActor).
@@ -496,7 +496,7 @@ class SecretChatActor final : public NetQueryCallback {
    public:
     Change() : message_id() {
     }
-    explicit operator bool() const {
+    explicit operator bool() const noexcept {
       return !data.empty();
     }
     explicit Change(const StateT &state) {
@@ -616,7 +616,8 @@ class SecretChatActor final : public NetQueryCallback {
   void send_action(tl_object_ptr<secret_api::DecryptedMessageAction> action, int32 flags, Promise<> promise);
 
   void send_message_impl(tl_object_ptr<secret_api::DecryptedMessage> message,
-                         tl_object_ptr<telegram_api::InputEncryptedFile> file, int32 flags, Promise<> promise);
+                         telegram_api::object_ptr<telegram_api::InputEncryptedFile> file, int32 flags,
+                         Promise<> promise);
 
   void do_outbound_message_impl(unique_ptr<log_event::OutboundSecretMessage>, Promise<> promise);
 

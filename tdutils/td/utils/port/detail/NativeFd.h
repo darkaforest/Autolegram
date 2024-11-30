@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -38,7 +38,7 @@ class NativeFd {
   NativeFd &operator=(NativeFd &&other) noexcept;
   ~NativeFd();
 
-  explicit operator bool() const;
+  explicit operator bool() const noexcept;
 
   Fd fd() const;
   Socket socket() const;
@@ -48,6 +48,9 @@ class NativeFd {
   Status set_is_blocking_unsafe(bool is_blocking) const;  // may drop other Fd flags on non-Windows
 
   Status duplicate(const NativeFd &to) const;
+
+  Result<uint32> maximize_snd_buffer(uint32 max_size = 0) const;
+  Result<uint32> maximize_rcv_buffer(uint32 max_size = 0) const;
 
   void close();
   Fd release();
@@ -61,6 +64,8 @@ class NativeFd {
 #if TD_PORT_WINDOWS
   bool is_socket_{false};
 #endif
+  static constexpr uint32 DEFAULT_MAX_SND_BUFFER_SIZE = (1 << 24);
+  static constexpr uint32 DEFAULT_MAX_RCV_BUFFER_SIZE = (1 << 24);
 };
 
 StringBuilder &operator<<(StringBuilder &sb, const NativeFd &fd);

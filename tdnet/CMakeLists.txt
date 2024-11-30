@@ -2,6 +2,8 @@ if ((CMAKE_MAJOR_VERSION LESS 3) OR (CMAKE_VERSION VERSION_LESS "3.0.2"))
   message(FATAL_ERROR "CMake >= 3.0.2 is required")
 endif()
 
+option(TDNET_ENABLE_INSTALL "Enable installation of the library." ON)
+
 if (NOT DEFINED CMAKE_INSTALL_LIBDIR)
   set(CMAKE_INSTALL_LIBDIR "lib")
 endif()
@@ -11,7 +13,6 @@ if (NOT OPENSSL_FOUND)
   find_package(ZLIB REQUIRED)
 endif()
 
-#SOURCE SETS
 set(TDNET_SOURCE
   td/net/GetHostByNameActor.cpp
   td/net/HttpChunkedByteFlow.cpp
@@ -24,6 +25,7 @@ set(TDNET_SOURCE
   td/net/HttpQuery.cpp
   td/net/HttpReader.cpp
   td/net/Socks5.cpp
+  td/net/SslCtx.cpp
   td/net/SslStream.cpp
   td/net/TcpListener.cpp
   td/net/TransparentProxy.cpp
@@ -42,6 +44,7 @@ set(TDNET_SOURCE
   td/net/HttpReader.h
   td/net/NetStats.h
   td/net/Socks5.h
+  td/net/SslCtx.h
   td/net/SslStream.h
   td/net/TcpListener.h
   td/net/TransparentProxy.h
@@ -56,9 +59,6 @@ if (APPLE_WATCH)
   )
   set_source_files_properties(td/net/DarwinHttp.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
 endif()
-
-#RULES
-#LIBRARIES
 
 add_library(tdnet STATIC ${TDNET_SOURCE})
 target_include_directories(tdnet PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
@@ -82,7 +82,9 @@ if (APPLE_WATCH)
   target_link_libraries(tdnet PRIVATE ${FOUNDATION_LIBRARY})
 endif()
 
-install(TARGETS tdnet EXPORT TdTargets
-  LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
-  ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
-)
+if (TDNET_ENABLE_INSTALL)
+  install(TARGETS tdnet EXPORT TdStaticTargets
+    LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+    ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+  )
+endif()

@@ -1,12 +1,12 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 //
 #include "td/telegram/DialogParticipant.h"
 
-#include "td/telegram/ContactsManager.h"
+#include "td/telegram/ChatManager.h"
 #include "td/telegram/Global.h"
 #include "td/telegram/misc.h"
 #include "td/telegram/Td.h"
@@ -31,7 +31,8 @@ AdministratorRights::AdministratorRights(const tl_object_ptr<telegram_api::chatA
   *this =
       AdministratorRights(rights->anonymous_, rights->other_, rights->change_info_, rights->post_messages_,
                           rights->edit_messages_, rights->delete_messages_, rights->invite_users_, rights->ban_users_,
-                          rights->pin_messages_, rights->add_admins_, rights->manage_call_, channel_type);
+                          rights->pin_messages_, rights->manage_topics_, rights->add_admins_, rights->manage_call_,
+                          rights->post_stories_, rights->edit_stories_, rights->delete_stories_, channel_type);
 }
 
 AdministratorRights::AdministratorRights(const td_api::object_ptr<td_api::chatAdministratorRights> &rights,
@@ -43,16 +44,21 @@ AdministratorRights::AdministratorRights(const td_api::object_ptr<td_api::chatAd
   *this = AdministratorRights(rights->is_anonymous_, rights->can_manage_chat_, rights->can_change_info_,
                               rights->can_post_messages_, rights->can_edit_messages_, rights->can_delete_messages_,
                               rights->can_invite_users_, rights->can_restrict_members_, rights->can_pin_messages_,
-                              rights->can_promote_members_, rights->can_manage_video_chats_, channel_type);
+                              rights->can_manage_topics_, rights->can_promote_members_, rights->can_manage_video_chats_,
+                              rights->can_post_stories_, rights->can_edit_stories_, rights->can_delete_stories_,
+                              channel_type);
 }
 
 AdministratorRights::AdministratorRights(bool is_anonymous, bool can_manage_dialog, bool can_change_info,
                                          bool can_post_messages, bool can_edit_messages, bool can_delete_messages,
                                          bool can_invite_users, bool can_restrict_members, bool can_pin_messages,
-                                         bool can_promote_members, bool can_manage_calls, ChannelType channel_type) {
+                                         bool can_manage_topics, bool can_promote_members, bool can_manage_calls,
+                                         bool can_post_stories, bool can_edit_stories, bool can_delete_stories,
+                                         ChannelType channel_type) {
   switch (channel_type) {
     case ChannelType::Broadcast:
       can_pin_messages = false;
+      can_manage_topics = false;
       is_anonymous = false;
       break;
     case ChannelType::Megagroup:
@@ -62,17 +68,21 @@ AdministratorRights::AdministratorRights(bool is_anonymous, bool can_manage_dial
     case ChannelType::Unknown:
       break;
   }
-  flags_ = (static_cast<uint32>(can_manage_dialog) * CAN_MANAGE_DIALOG) |
-           (static_cast<uint32>(can_change_info) * CAN_CHANGE_INFO_AND_SETTINGS) |
-           (static_cast<uint32>(can_post_messages) * CAN_POST_MESSAGES) |
-           (static_cast<uint32>(can_edit_messages) * CAN_EDIT_MESSAGES) |
-           (static_cast<uint32>(can_delete_messages) * CAN_DELETE_MESSAGES) |
-           (static_cast<uint32>(can_invite_users) * CAN_INVITE_USERS) |
-           (static_cast<uint32>(can_restrict_members) * CAN_RESTRICT_MEMBERS) |
-           (static_cast<uint32>(can_pin_messages) * CAN_PIN_MESSAGES) |
-           (static_cast<uint32>(can_promote_members) * CAN_PROMOTE_MEMBERS) |
-           (static_cast<uint32>(can_manage_calls) * CAN_MANAGE_CALLS) |
-           (static_cast<uint32>(is_anonymous) * IS_ANONYMOUS);
+  flags_ = (static_cast<uint64>(can_manage_dialog) * CAN_MANAGE_DIALOG) |
+           (static_cast<uint64>(can_change_info) * CAN_CHANGE_INFO_AND_SETTINGS) |
+           (static_cast<uint64>(can_post_messages) * CAN_POST_MESSAGES) |
+           (static_cast<uint64>(can_edit_messages) * CAN_EDIT_MESSAGES) |
+           (static_cast<uint64>(can_delete_messages) * CAN_DELETE_MESSAGES) |
+           (static_cast<uint64>(can_invite_users) * CAN_INVITE_USERS) |
+           (static_cast<uint64>(can_restrict_members) * CAN_RESTRICT_MEMBERS) |
+           (static_cast<uint64>(can_pin_messages) * CAN_PIN_MESSAGES) |
+           (static_cast<uint64>(can_manage_topics) * CAN_MANAGE_TOPICS) |
+           (static_cast<uint64>(can_promote_members) * CAN_PROMOTE_MEMBERS) |
+           (static_cast<uint64>(can_manage_calls) * CAN_MANAGE_CALLS) |
+           (static_cast<uint64>(can_post_stories) * CAN_POST_STORIES) |
+           (static_cast<uint64>(can_edit_stories) * CAN_EDIT_STORIES) |
+           (static_cast<uint64>(can_delete_stories) * CAN_DELETE_STORIES) |
+           (static_cast<uint64>(is_anonymous) * IS_ANONYMOUS);
   if (flags_ != 0) {
     flags_ |= CAN_MANAGE_DIALOG;
     if (channel_type == ChannelType::Broadcast) {
@@ -83,7 +93,7 @@ AdministratorRights::AdministratorRights(bool is_anonymous, bool can_manage_dial
 
 telegram_api::object_ptr<telegram_api::chatAdminRights> AdministratorRights::get_chat_admin_rights() const {
   int32 flags = 0;
-  if ((flags_ & CAN_CHANGE_INFO_AND_SETTINGS) != 0) {
+  if (can_change_info_and_settings()) {
     flags |= telegram_api::chatAdminRights::CHANGE_INFO_MASK;
   }
   if (can_post_messages()) {
@@ -95,14 +105,17 @@ telegram_api::object_ptr<telegram_api::chatAdminRights> AdministratorRights::get
   if (can_delete_messages()) {
     flags |= telegram_api::chatAdminRights::DELETE_MESSAGES_MASK;
   }
-  if ((flags_ & CAN_INVITE_USERS) != 0) {
+  if (can_invite_users()) {
     flags |= telegram_api::chatAdminRights::INVITE_USERS_MASK;
   }
   if (can_restrict_members()) {
     flags |= telegram_api::chatAdminRights::BAN_USERS_MASK;
   }
-  if ((flags_ & CAN_PIN_MESSAGES) != 0) {
+  if (can_pin_messages()) {
     flags |= telegram_api::chatAdminRights::PIN_MESSAGES_MASK;
+  }
+  if (can_manage_topics()) {
+    flags |= telegram_api::chatAdminRights::MANAGE_TOPICS_MASK;
   }
   if (can_promote_members()) {
     flags |= telegram_api::chatAdminRights::ADD_ADMINS_MASK;
@@ -113,20 +126,31 @@ telegram_api::object_ptr<telegram_api::chatAdminRights> AdministratorRights::get
   if (can_manage_dialog()) {
     flags |= telegram_api::chatAdminRights::OTHER_MASK;
   }
+  if (can_post_stories()) {
+    flags |= telegram_api::chatAdminRights::POST_STORIES_MASK;
+  }
+  if (can_edit_stories()) {
+    flags |= telegram_api::chatAdminRights::EDIT_STORIES_MASK;
+  }
+  if (can_delete_stories()) {
+    flags |= telegram_api::chatAdminRights::DELETE_STORIES_MASK;
+  }
   if (is_anonymous()) {
     flags |= telegram_api::chatAdminRights::ANONYMOUS_MASK;
   }
 
   return telegram_api::make_object<telegram_api::chatAdminRights>(
       flags, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
-      false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/);
+      false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
+      false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/);
 }
 
 td_api::object_ptr<td_api::chatAdministratorRights> AdministratorRights::get_chat_administrator_rights_object() const {
   return td_api::make_object<td_api::chatAdministratorRights>(
       can_manage_dialog(), can_change_info_and_settings(), can_post_messages(), can_edit_messages(),
-      can_delete_messages(), can_invite_users(), can_restrict_members(), can_pin_messages(), can_promote_members(),
-      can_manage_calls(), is_anonymous());
+      can_delete_messages(), can_invite_users(), can_restrict_members(), can_pin_messages(), can_manage_topics(),
+      can_promote_members(), can_manage_calls(), can_post_stories(), can_edit_stories(), can_delete_stories(),
+      is_anonymous());
 }
 
 bool operator==(const AdministratorRights &lhs, const AdministratorRights &rhs) {
@@ -163,11 +187,23 @@ StringBuilder &operator<<(StringBuilder &string_builder, const AdministratorRigh
   if (status.can_pin_messages()) {
     string_builder << "(pin)";
   }
+  if (status.can_manage_topics()) {
+    string_builder << "(manage_topics)";
+  }
   if (status.can_promote_members()) {
     string_builder << "(promote)";
   }
   if (status.can_manage_calls()) {
     string_builder << "(voice chat)";
+  }
+  if (status.can_post_stories()) {
+    string_builder << "(post story)";
+  }
+  if (status.can_edit_stories()) {
+    string_builder << "(edit story)";
+  }
+  if (status.can_delete_stories()) {
+    string_builder << "(delete story)";
   }
   if (status.is_anonymous()) {
     string_builder << "(anonymous)";
@@ -175,8 +211,9 @@ StringBuilder &operator<<(StringBuilder &string_builder, const AdministratorRigh
   return string_builder;
 }
 
-RestrictedRights::RestrictedRights(const tl_object_ptr<telegram_api::chatBannedRights> &rights) {
-  if (rights == nullptr) {
+RestrictedRights::RestrictedRights(const tl_object_ptr<telegram_api::chatBannedRights> &rights,
+                                   ChannelType channel_type) {
+  if (rights == nullptr || channel_type == ChannelType::Broadcast) {
     flags_ = 0;
     return;
   }
@@ -186,58 +223,89 @@ RestrictedRights::RestrictedRights(const tl_object_ptr<telegram_api::chatBannedR
   LOG_IF(ERROR, rights->until_date_ != std::numeric_limits<int32>::max())
       << "Have until date " << rights->until_date_ << " in restricted rights";
 
-  *this = RestrictedRights(!rights->send_messages_, !rights->send_media_, !rights->send_stickers_, !rights->send_gifs_,
-                           !rights->send_games_, !rights->send_inline_, !rights->embed_links_, !rights->send_polls_,
-                           !rights->change_info_, !rights->invite_users_, !rights->pin_messages_);
+  *this = RestrictedRights(!rights->send_plain_, !rights->send_audios_, !rights->send_docs_, !rights->send_photos_,
+                           !rights->send_videos_, !rights->send_roundvideos_, !rights->send_voices_,
+                           !rights->send_stickers_, !rights->send_gifs_, !rights->send_games_, !rights->send_inline_,
+                           !rights->embed_links_, !rights->send_polls_, !rights->change_info_, !rights->invite_users_,
+                           !rights->pin_messages_, !rights->manage_topics_, channel_type);
 }
 
-RestrictedRights::RestrictedRights(const td_api::object_ptr<td_api::chatPermissions> &rights) {
-  if (rights == nullptr) {
+RestrictedRights::RestrictedRights(const td_api::object_ptr<td_api::chatPermissions> &rights,
+                                   ChannelType channel_type) {
+  if (rights == nullptr || channel_type == ChannelType::Broadcast) {
     flags_ = 0;
     return;
   }
 
-  bool can_send_polls = rights->can_send_polls_;
-  bool can_send_media = rights->can_send_media_messages_;
-  bool can_send_messages = rights->can_send_messages_ || can_send_media || can_send_polls ||
-                           rights->can_send_other_messages_ || rights->can_add_web_page_previews_;
-  *this = RestrictedRights(can_send_messages, can_send_media, rights->can_send_other_messages_,
+  *this = RestrictedRights(rights->can_send_basic_messages_, rights->can_send_audios_, rights->can_send_documents_,
+                           rights->can_send_photos_, rights->can_send_videos_, rights->can_send_video_notes_,
+                           rights->can_send_voice_notes_, rights->can_send_other_messages_,
                            rights->can_send_other_messages_, rights->can_send_other_messages_,
-                           rights->can_send_other_messages_, rights->can_add_web_page_previews_, can_send_polls,
-                           rights->can_change_info_, rights->can_invite_users_, rights->can_pin_messages_);
+                           rights->can_send_other_messages_, rights->can_add_link_previews_, rights->can_send_polls_,
+                           rights->can_change_info_, rights->can_invite_users_, rights->can_pin_messages_,
+                           rights->can_create_topics_, channel_type);
 }
 
-RestrictedRights::RestrictedRights(bool can_send_messages, bool can_send_media, bool can_send_stickers,
-                                   bool can_send_animations, bool can_send_games, bool can_use_inline_bots,
-                                   bool can_add_web_page_previews, bool can_send_polls,
-                                   bool can_change_info_and_settings, bool can_invite_users, bool can_pin_messages) {
-  flags_ = (static_cast<uint32>(can_send_messages) * CAN_SEND_MESSAGES) |
-           (static_cast<uint32>(can_send_media) * CAN_SEND_MEDIA) |
-           (static_cast<uint32>(can_send_stickers) * CAN_SEND_STICKERS) |
-           (static_cast<uint32>(can_send_animations) * CAN_SEND_ANIMATIONS) |
-           (static_cast<uint32>(can_send_games) * CAN_SEND_GAMES) |
-           (static_cast<uint32>(can_use_inline_bots) * CAN_USE_INLINE_BOTS) |
-           (static_cast<uint32>(can_add_web_page_previews) * CAN_ADD_WEB_PAGE_PREVIEWS) |
-           (static_cast<uint32>(can_send_polls) * CAN_SEND_POLLS) |
-           (static_cast<uint32>(can_change_info_and_settings) * CAN_CHANGE_INFO_AND_SETTINGS) |
-           (static_cast<uint32>(can_invite_users) * CAN_INVITE_USERS) |
-           (static_cast<uint32>(can_pin_messages) * CAN_PIN_MESSAGES);
+RestrictedRights::RestrictedRights(bool can_send_messages, bool can_send_audios, bool can_send_documents,
+                                   bool can_send_photos, bool can_send_videos, bool can_send_video_notes,
+                                   bool can_send_voice_notes, bool can_send_stickers, bool can_send_animations,
+                                   bool can_send_games, bool can_use_inline_bots, bool can_add_web_page_previews,
+                                   bool can_send_polls, bool can_change_info_and_settings, bool can_invite_users,
+                                   bool can_pin_messages, bool can_manage_topics, ChannelType channel_type) {
+  if (channel_type == ChannelType::Broadcast) {
+    flags_ = 0;
+    return;
+  }
+  flags_ = (static_cast<uint64>(can_send_messages) * CAN_SEND_MESSAGES) |
+           (static_cast<uint64>(can_send_audios) * CAN_SEND_AUDIOS) |
+           (static_cast<uint64>(can_send_documents) * CAN_SEND_DOCUMENTS) |
+           (static_cast<uint64>(can_send_photos) * CAN_SEND_PHOTOS) |
+           (static_cast<uint64>(can_send_videos) * CAN_SEND_VIDEOS) |
+           (static_cast<uint64>(can_send_video_notes) * CAN_SEND_VIDEO_NOTES) |
+           (static_cast<uint64>(can_send_voice_notes) * CAN_SEND_VOICE_NOTES) |
+           (static_cast<uint64>(can_send_stickers) * CAN_SEND_STICKERS) |
+           (static_cast<uint64>(can_send_animations) * CAN_SEND_ANIMATIONS) |
+           (static_cast<uint64>(can_send_games) * CAN_SEND_GAMES) |
+           (static_cast<uint64>(can_use_inline_bots) * CAN_USE_INLINE_BOTS) |
+           (static_cast<uint64>(can_add_web_page_previews) * CAN_ADD_WEB_PAGE_PREVIEWS) |
+           (static_cast<uint64>(can_send_polls) * CAN_SEND_POLLS) |
+           (static_cast<uint64>(can_change_info_and_settings) * CAN_CHANGE_INFO_AND_SETTINGS) |
+           (static_cast<uint64>(can_invite_users) * CAN_INVITE_USERS) |
+           (static_cast<uint64>(can_pin_messages) * CAN_PIN_MESSAGES) |
+           (static_cast<uint64>(can_manage_topics) * CAN_MANAGE_TOPICS);
 }
 
 td_api::object_ptr<td_api::chatPermissions> RestrictedRights::get_chat_permissions_object() const {
   return td_api::make_object<td_api::chatPermissions>(
-      can_send_messages(), can_send_media(), can_send_polls(),
+      can_send_messages(), can_send_audios(), can_send_documents(), can_send_photos(), can_send_videos(),
+      can_send_video_notes(), can_send_voice_notes(), can_send_polls(),
       can_send_stickers() || can_send_animations() || can_send_games() || can_use_inline_bots(),
-      can_add_web_page_previews(), can_change_info_and_settings(), can_invite_users(), can_pin_messages());
+      can_add_web_page_previews(), can_change_info_and_settings(), can_invite_users(), can_pin_messages(),
+      can_manage_topics());
 }
 
 tl_object_ptr<telegram_api::chatBannedRights> RestrictedRights::get_chat_banned_rights() const {
   int32 flags = 0;
   if (!can_send_messages()) {
-    flags |= telegram_api::chatBannedRights::SEND_MESSAGES_MASK;
+    flags |= telegram_api::chatBannedRights::SEND_PLAIN_MASK;
   }
-  if (!can_send_media()) {
-    flags |= telegram_api::chatBannedRights::SEND_MEDIA_MASK;
+  if (!can_send_audios()) {
+    flags |= telegram_api::chatBannedRights::SEND_AUDIOS_MASK;
+  }
+  if (!can_send_documents()) {
+    flags |= telegram_api::chatBannedRights::SEND_DOCS_MASK;
+  }
+  if (!can_send_photos()) {
+    flags |= telegram_api::chatBannedRights::SEND_PHOTOS_MASK;
+  }
+  if (!can_send_videos()) {
+    flags |= telegram_api::chatBannedRights::SEND_VIDEOS_MASK;
+  }
+  if (!can_send_video_notes()) {
+    flags |= telegram_api::chatBannedRights::SEND_ROUNDVIDEOS_MASK;
+  }
+  if (!can_send_voice_notes()) {
+    flags |= telegram_api::chatBannedRights::SEND_VOICES_MASK;
   }
   if (!can_send_stickers()) {
     flags |= telegram_api::chatBannedRights::SEND_STICKERS_MASK;
@@ -266,12 +334,16 @@ tl_object_ptr<telegram_api::chatBannedRights> RestrictedRights::get_chat_banned_
   if (!can_pin_messages()) {
     flags |= telegram_api::chatBannedRights::PIN_MESSAGES_MASK;
   }
+  if (!can_manage_topics()) {
+    flags |= telegram_api::chatBannedRights::MANAGE_TOPICS_MASK;
+  }
 
   LOG(INFO) << "Create chat banned rights " << flags;
-  return make_tl_object<telegram_api::chatBannedRights>(flags, false /*ignored*/, false /*ignored*/, false /*ignored*/,
-                                                        false /*ignored*/, false /*ignored*/, false /*ignored*/,
-                                                        false /*ignored*/, false /*ignored*/, false /*ignored*/,
-                                                        false /*ignored*/, false /*ignored*/, false /*ignored*/, 0);
+  return make_tl_object<telegram_api::chatBannedRights>(
+      flags, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
+      false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
+      false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/, false /*ignored*/,
+      false /*ignored*/, false /*ignored*/, false /*ignored*/, 0);
 }
 
 bool operator==(const RestrictedRights &lhs, const RestrictedRights &rhs) {
@@ -285,13 +357,28 @@ bool operator!=(const RestrictedRights &lhs, const RestrictedRights &rhs) {
 StringBuilder &operator<<(StringBuilder &string_builder, const RestrictedRights &status) {
   string_builder << "Restricted: ";
   if (!status.can_send_messages()) {
-    string_builder << "(text)";
+    string_builder << "(text+contact+invoice+location+venue)";
   }
-  if (!status.can_send_media()) {
-    string_builder << "(media)";
+  if (!status.can_send_audios()) {
+    string_builder << "(audios)";
+  }
+  if (!status.can_send_documents()) {
+    string_builder << "(documents)";
+  }
+  if (!status.can_send_photos()) {
+    string_builder << "(photos)";
+  }
+  if (!status.can_send_videos()) {
+    string_builder << "(videos)";
+  }
+  if (!status.can_send_video_notes()) {
+    string_builder << "(video notes)";
+  }
+  if (!status.can_send_voice_notes()) {
+    string_builder << "(voice notes)";
   }
   if (!status.can_send_stickers()) {
-    string_builder << "(stickers)";
+    string_builder << "(stickers+dices)";
   }
   if (!status.can_send_animations()) {
     string_builder << "(animations)";
@@ -317,11 +404,14 @@ StringBuilder &operator<<(StringBuilder &string_builder, const RestrictedRights 
   if (!status.can_pin_messages()) {
     string_builder << "(pin)";
   }
+  if (!status.can_manage_topics()) {
+    string_builder << "(topics)";
+  }
   return string_builder;
 }
 
-DialogParticipantStatus::DialogParticipantStatus(Type type, uint32 flags, int32 until_date, string rank)
-    : type_(type), flags_(flags), until_date_(until_date), rank_(strip_empty_characters(std::move(rank), 16)) {
+DialogParticipantStatus::DialogParticipantStatus(Type type, uint64 flags, int32 until_date, string rank)
+    : type_(type), until_date_(until_date), flags_(flags), rank_(strip_empty_characters(std::move(rank), 16)) {
 }
 
 int32 DialogParticipantStatus::fix_until_date(int32 date) {
@@ -341,28 +431,29 @@ DialogParticipantStatus DialogParticipantStatus::Creator(bool is_member, bool is
 
 DialogParticipantStatus DialogParticipantStatus::Administrator(AdministratorRights administrator_rights, string &&rank,
                                                                bool can_be_edited) {
-  uint32 flags = administrator_rights.flags_;
+  uint64 flags = administrator_rights.flags_;
   if (flags == 0) {
-    return Member();
+    return Member(0);
   }
-  flags = flags | (static_cast<uint32>(can_be_edited) * CAN_BE_EDITED);
+  flags = flags | (static_cast<uint64>(can_be_edited) * CAN_BE_EDITED);
   return DialogParticipantStatus(
       Type::Administrator,
       IS_MEMBER | (RestrictedRights::ALL_RESTRICTED_RIGHTS & ~RestrictedRights::ALL_ADMIN_PERMISSION_RIGHTS) | flags, 0,
       std::move(rank));
 }
 
-DialogParticipantStatus DialogParticipantStatus::Member() {
-  return DialogParticipantStatus(Type::Member, IS_MEMBER | RestrictedRights::ALL_RESTRICTED_RIGHTS, 0, string());
+DialogParticipantStatus DialogParticipantStatus::Member(int32 member_until_date) {
+  return DialogParticipantStatus(Type::Member, IS_MEMBER | RestrictedRights::ALL_RESTRICTED_RIGHTS, member_until_date,
+                                 string());
 }
 
 DialogParticipantStatus DialogParticipantStatus::Restricted(RestrictedRights restricted_rights, bool is_member,
-                                                            int32 restricted_until_date) {
-  uint32 flags = restricted_rights.flags_;
-  if (flags == RestrictedRights::ALL_RESTRICTED_RIGHTS) {
-    return is_member ? Member() : Left();
+                                                            int32 restricted_until_date, ChannelType channel_type) {
+  uint64 flags = restricted_rights.flags_;
+  if (flags == RestrictedRights::ALL_RESTRICTED_RIGHTS || channel_type == ChannelType::Broadcast) {
+    return is_member ? Member(0) : Left();
   }
-  flags |= (static_cast<uint32>(is_member) * IS_MEMBER);
+  flags |= (static_cast<uint64>(is_member) * IS_MEMBER);
   return DialogParticipantStatus(Type::Restricted, flags, fix_until_date(restricted_until_date), string());
 }
 
@@ -375,16 +466,16 @@ DialogParticipantStatus DialogParticipantStatus::Banned(int32 banned_until_date)
 }
 
 DialogParticipantStatus DialogParticipantStatus::GroupAdministrator(bool is_creator) {
-  return Administrator(
-      AdministratorRights(false, true, true, false, false, true, true, true, true, false, true, ChannelType::Unknown),
-      string(), is_creator);
+  return Administrator(AdministratorRights(false, true, true, false, false, true, true, true, true, false, false, true,
+                                           false, false, false, ChannelType::Unknown),
+                       string(), is_creator);
 }
 
 DialogParticipantStatus DialogParticipantStatus::ChannelAdministrator(bool is_creator, bool is_megagroup) {
-  auto rights = is_megagroup ? AdministratorRights(false, true, true, false, false, true, true, true, true, false,
-                                                   false, ChannelType::Megagroup)
+  auto rights = is_megagroup ? AdministratorRights(false, true, true, false, false, true, true, true, true, true, false,
+                                                   false, false, false, false, ChannelType::Megagroup)
                              : AdministratorRights(false, true, false, true, true, true, false, true, false, false,
-                                                   false, ChannelType::Broadcast);
+                                                   false, false, true, true, true, ChannelType::Broadcast);
   return Administrator(rights, string(), is_creator);
 }
 
@@ -392,32 +483,36 @@ DialogParticipantStatus::DialogParticipantStatus(bool can_be_edited,
                                                  tl_object_ptr<telegram_api::chatAdminRights> &&admin_rights,
                                                  string rank, ChannelType channel_type) {
   CHECK(admin_rights != nullptr);
-  uint32 flags = AdministratorRights(admin_rights, channel_type).flags_ | AdministratorRights::CAN_MANAGE_DIALOG;
-  if (can_be_edited) {
-    flags |= CAN_BE_EDITED;
-  }
-  flags |= (RestrictedRights::ALL_RESTRICTED_RIGHTS & ~RestrictedRights::ALL_ADMIN_PERMISSION_RIGHTS) | IS_MEMBER;
-  *this = DialogParticipantStatus(Type::Administrator, flags, 0, std::move(rank));
+  *this = Administrator(AdministratorRights(admin_rights, channel_type), std::move(rank), can_be_edited);
 }
 
 DialogParticipantStatus::DialogParticipantStatus(bool is_member,
-                                                 tl_object_ptr<telegram_api::chatBannedRights> &&banned_rights) {
+                                                 tl_object_ptr<telegram_api::chatBannedRights> &&banned_rights,
+                                                 ChannelType channel_type) {
   CHECK(banned_rights != nullptr);
   if (banned_rights->view_messages_) {
-    *this = DialogParticipantStatus::Banned(banned_rights->until_date_);
+    *this = Banned(banned_rights->until_date_);
+    return;
+  }
+  if (channel_type == ChannelType::Broadcast) {
+    *this = is_member ? Member(0) : Left();
     return;
   }
 
   auto until_date = fix_until_date(banned_rights->until_date_);
   banned_rights->until_date_ = std::numeric_limits<int32>::max();
-  uint32 flags = RestrictedRights(banned_rights).flags_ | (static_cast<uint32>(is_member) * IS_MEMBER);
+
+  // manually create Restricted status, because the user can be restricted, but with yet unknown restrictions
+  uint64 flags = RestrictedRights(banned_rights, channel_type).flags_ | (static_cast<uint64>(is_member) * IS_MEMBER);
   *this = DialogParticipantStatus(Type::Restricted, flags, until_date, string());
 }
 
 RestrictedRights DialogParticipantStatus::get_effective_restricted_rights() const {
-  return RestrictedRights(can_send_messages(), can_send_media(), can_send_stickers(), can_send_animations(),
-                          can_send_games(), can_use_inline_bots(), can_add_web_page_previews(), can_send_polls(),
-                          can_change_info_and_settings(), can_invite_users(), can_pin_messages());
+  return RestrictedRights(can_send_messages(), can_send_audios(), can_send_documents(), can_send_photos(),
+                          can_send_videos(), can_send_video_notes(), can_send_voice_notes(), can_send_stickers(),
+                          can_send_animations(), can_send_games(), can_use_inline_bots(), can_add_web_page_previews(),
+                          can_send_polls(), can_change_info_and_settings(), can_invite_users(), can_pin_messages(),
+                          can_create_topics(), ChannelType::Unknown);
 }
 
 tl_object_ptr<td_api::ChatMemberStatus> DialogParticipantStatus::get_chat_member_status_object() const {
@@ -428,7 +523,7 @@ tl_object_ptr<td_api::ChatMemberStatus> DialogParticipantStatus::get_chat_member
       return td_api::make_object<td_api::chatMemberStatusAdministrator>(
           rank_, can_be_edited(), get_administrator_rights().get_chat_administrator_rights_object());
     case Type::Member:
-      return td_api::make_object<td_api::chatMemberStatusMember>();
+      return td_api::make_object<td_api::chatMemberStatusMember>(until_date_);
     case Type::Restricted:
       return td_api::make_object<td_api::chatMemberStatusRestricted>(
           is_member(), until_date_, get_restricted_rights().get_chat_permissions_object());
@@ -456,7 +551,7 @@ tl_object_ptr<telegram_api::chatBannedRights> DialogParticipantStatus::get_chat_
 }
 
 DialogParticipantStatus DialogParticipantStatus::apply_restrictions(RestrictedRights default_restrictions,
-                                                                    bool is_bot) const {
+                                                                    bool is_booster, bool is_bot) const {
   auto flags = flags_;
   switch (type_) {
     case Type::Creator:
@@ -472,9 +567,12 @@ DialogParticipantStatus DialogParticipantStatus::apply_restrictions(RestrictedRi
     case Type::Member:
     case Type::Restricted:
     case Type::Left:
-      // members and restricted are affected by default restrictions
-      flags &= (~RestrictedRights::ALL_RESTRICTED_RIGHTS) | default_restrictions.flags_;
+      if (!is_booster) {
+        // members and restricted are affected by default restrictions unless they are supergroup boosters
+        flags &= (~RestrictedRights::ALL_RESTRICTED_RIGHTS) | default_restrictions.flags_;
+      }
       if (is_bot) {
+        // bots must be explicitly granted administrator rights to use them
         flags &= ~RestrictedRights::ALL_ADMIN_PERMISSION_RIGHTS;
       }
       break;
@@ -499,7 +597,7 @@ void DialogParticipantStatus::update_restrictions() const {
         type_ = Type::Left;
       }
       flags_ |= RestrictedRights::ALL_RESTRICTED_RIGHTS;
-    } else if (type_ == Type::Banned) {
+    } else if (type_ == Type::Banned || type_ == Type::Member) {
       type_ = Type::Left;
     } else {
       UNREACHABLE();
@@ -540,7 +638,11 @@ StringBuilder &operator<<(StringBuilder &string_builder, const DialogParticipant
       }
       return string_builder;
     case DialogParticipantStatus::Type::Member:
-      return string_builder << "Member";
+      string_builder << "Member";
+      if (status.until_date_ != 0) {
+        string_builder << " until " << status.until_date_;
+      }
+      return string_builder;
     case DialogParticipantStatus::Type::Restricted:
       string_builder << status.get_restricted_rights();
       if (status.until_date_ == 0) {
@@ -605,11 +707,11 @@ DialogParticipantStatus get_dialog_participant_status(const td_api::object_ptr<t
                                                     std::move(custom_title), true /*st->can_be_edited_*/);
     }
     case td_api::chatMemberStatusMember::ID:
-      return DialogParticipantStatus::Member();
+      return DialogParticipantStatus::Member(0);
     case td_api::chatMemberStatusRestricted::ID: {
       auto st = static_cast<const td_api::chatMemberStatusRestricted *>(status.get());
-      return DialogParticipantStatus::Restricted(RestrictedRights(st->permissions_), st->is_member_,
-                                                 fix_until_date(st->restricted_until_date_));
+      return DialogParticipantStatus::Restricted(RestrictedRights(st->permissions_, channel_type), st->is_member_,
+                                                 fix_until_date(st->restricted_until_date_), channel_type);
     }
     case td_api::chatMemberStatusLeft::ID:
       return DialogParticipantStatus::Left();
@@ -619,7 +721,7 @@ DialogParticipantStatus get_dialog_participant_status(const td_api::object_ptr<t
     }
     default:
       UNREACHABLE();
-      return DialogParticipantStatus::Member();
+      return DialogParticipantStatus::Member(0);
   }
 }
 
@@ -642,7 +744,7 @@ DialogParticipant::DialogParticipant(tl_object_ptr<telegram_api::ChatParticipant
     case telegram_api::chatParticipant::ID: {
       auto participant = move_tl_object_as<telegram_api::chatParticipant>(participant_ptr);
       *this = {DialogId(UserId(participant->user_id_)), UserId(participant->inviter_id_), participant->date_,
-               DialogParticipantStatus::Member()};
+               DialogParticipantStatus::Member(0)};
       break;
     }
     case telegram_api::chatParticipantCreator::ID: {
@@ -670,13 +772,13 @@ DialogParticipant::DialogParticipant(tl_object_ptr<telegram_api::ChannelParticip
     case telegram_api::channelParticipant::ID: {
       auto participant = move_tl_object_as<telegram_api::channelParticipant>(participant_ptr);
       *this = {DialogId(UserId(participant->user_id_)), UserId(), participant->date_,
-               DialogParticipantStatus::Member()};
+               DialogParticipantStatus::Member(participant->subscription_until_date_)};
       break;
     }
     case telegram_api::channelParticipantSelf::ID: {
       auto participant = move_tl_object_as<telegram_api::channelParticipantSelf>(participant_ptr);
       *this = {DialogId(UserId(participant->user_id_)), UserId(participant->inviter_id_), participant->date_,
-               DialogParticipantStatus::Member()};
+               DialogParticipantStatus::Member(participant->subscription_until_date_)};
       break;
     }
     case telegram_api::channelParticipantCreator::ID: {
@@ -701,7 +803,7 @@ DialogParticipant::DialogParticipant(tl_object_ptr<telegram_api::ChannelParticip
     case telegram_api::channelParticipantBanned::ID: {
       auto participant = move_tl_object_as<telegram_api::channelParticipantBanned>(participant_ptr);
       *this = {DialogId(participant->peer_), UserId(participant->kicked_by_), participant->date_,
-               DialogParticipantStatus(!participant->left_, std::move(participant->banned_rights_))};
+               DialogParticipantStatus(!participant->left_, std::move(participant->banned_rights_), channel_type)};
       break;
     }
     default:
@@ -726,11 +828,11 @@ StringBuilder &operator<<(StringBuilder &string_builder, const DialogParticipant
                         << ']';
 }
 
-td_api::object_ptr<td_api::chatMembers> DialogParticipants::get_chat_members_object(Td *td) const {
+td_api::object_ptr<td_api::chatMembers> DialogParticipants::get_chat_members_object(Td *td, const char *source) const {
   vector<tl_object_ptr<td_api::chatMember>> chat_members;
   chat_members.reserve(participants_.size());
   for (auto &participant : participants_) {
-    chat_members.push_back(td->contacts_manager_->get_chat_member_object(participant));
+    chat_members.push_back(td->chat_manager_->get_chat_member_object(participant, source));
   }
 
   return td_api::make_object<td_api::chatMembers>(total_count_, std::move(chat_members));

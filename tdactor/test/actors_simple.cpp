@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -15,6 +15,7 @@
 #include "td/utils/MpscPollableQueue.h"
 #include "td/utils/Observer.h"
 #include "td/utils/port/FileFd.h"
+#include "td/utils/port/path.h"
 #include "td/utils/port/thread.h"
 #include "td/utils/Promise.h"
 #include "td/utils/Slice.h"
@@ -165,7 +166,7 @@ TEST(Actors, simple_pass_event_arguments) {
 
   // Var-->LvalueRef
   // Var-->LvalueRef (Delayed)
-  // CE or stange behaviour
+  // CE or strange behaviour
 
   // Var-->Value
   sb.clear();
@@ -281,8 +282,9 @@ class OpenClose final : public td::Actor {
   }
   void wakeup() final {
     auto observer = reinterpret_cast<td::ObserverBase *>(123);
+    td::CSlice file_name = "server";
     if (cnt_ > 0) {
-      auto r_file_fd = td::FileFd::open("server", td::FileFd::Read | td::FileFd::Create);
+      auto r_file_fd = td::FileFd::open(file_name, td::FileFd::Read | td::FileFd::Create);
       LOG_CHECK(r_file_fd.is_ok()) << r_file_fd.error();
       auto file_fd = r_file_fd.move_as_ok();
       { auto pollable_fd = file_fd.get_poll_info().extract_pollable_fd(observer); }
@@ -307,6 +309,7 @@ TEST(Actors, open_close) {
   while (scheduler.run_main(10)) {
   }
   scheduler.finish();
+  td::unlink("server").ignore();
 }
 
 class MsgActor : public td::Actor {
@@ -571,7 +574,6 @@ TEST(Actors, stop_in_teardown) {
 class AlwaysWaitForMailbox final : public td::Actor {
  public:
   void start_up() final {
-    always_wait_for_mailbox();
     td::create_actor<td::SleepActor>("Sleep", 0.1,
                                      td::PromiseCreator::lambda([actor_id = actor_id(this), ptr = this](td::Unit) {
                                        td::send_closure(actor_id, &AlwaysWaitForMailbox::g);

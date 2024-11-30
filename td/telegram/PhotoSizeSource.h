@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -8,6 +8,7 @@
 
 #include "td/telegram/DialogId.h"
 #include "td/telegram/files/FileType.h"
+#include "td/telegram/PhotoSizeType.h"
 #include "td/telegram/telegram_api.h"
 
 #include "td/utils/common.h"
@@ -47,7 +48,7 @@ struct PhotoSizeSource {
     }
 
     FileType file_type = FileType::None;
-    int32 thumbnail_type = 0;
+    PhotoSizeType thumbnail_type;
   };
 
   // for dialog photos
@@ -152,10 +153,6 @@ struct PhotoSizeSource {
     }
   }
 
-  static PhotoSizeSource sticker_set_thumbnail(int64 sticker_set_id, int64 sticker_set_access_hash) {
-    return PhotoSizeSource(StickerSetThumbnail(sticker_set_id, sticker_set_access_hash));
-  }
-
   static PhotoSizeSource full_legacy(int64 volume_id, int32 local_id, int64 secret) {
     return PhotoSizeSource(FullLegacy(volume_id, local_id, secret));
   }
@@ -177,6 +174,10 @@ struct PhotoSizeSource {
   static PhotoSizeSource sticker_set_thumbnail(int64 sticker_set_id, int64 sticker_set_access_hash, int32 version) {
     return PhotoSizeSource(StickerSetThumbnailVersion(sticker_set_id, sticker_set_access_hash, version));
   }
+
+  static bool unique_less(const PhotoSizeSource &lhs, const PhotoSizeSource &rhs);
+
+  static bool unique_equal(const PhotoSizeSource &lhs, const PhotoSizeSource &rhs);
 
   Type get_type(const char *source) const {
     auto offset = variant_.get_offset();
@@ -242,10 +243,10 @@ struct PhotoSizeSource {
   }
 
   // returns unique representation of the source
-  string get_unique() const;
+  string get_unique(const char *source) const;
 
   // can't be called for Legacy sources
-  string get_unique_name(int64 photo_id) const;
+  string get_unique_name(int64 photo_id, const char *source) const;
 
   template <class StorerT>
   void store(StorerT &storer) const;
@@ -262,6 +263,12 @@ struct PhotoSizeSource {
   template <class T>
   explicit PhotoSizeSource(const T &variant) : variant_(variant) {
   }
+
+  int32 get_compare_type(const char *source) const;
+
+  int64 get_compare_volume_id() const;
+
+  int32 get_compare_local_id() const;
 };
 
 bool operator==(const PhotoSizeSource &lhs, const PhotoSizeSource &rhs);

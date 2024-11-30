@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -7,10 +7,11 @@
 #include "td/telegram/BotCommand.h"
 
 #include "td/telegram/BotCommandScope.h"
-#include "td/telegram/ContactsManager.h"
 #include "td/telegram/Global.h"
 #include "td/telegram/misc.h"
 #include "td/telegram/Td.h"
+#include "td/telegram/telegram_api.h"
+#include "td/telegram/UserManager.h"
 
 #include "td/utils/algorithm.h"
 #include "td/utils/buffer.h"
@@ -19,6 +20,8 @@
 #include "td/utils/SliceBuilder.h"
 #include "td/utils/Status.h"
 #include "td/utils/utf8.h"
+
+#include <algorithm>
 
 namespace td {
 
@@ -97,7 +100,7 @@ class GetBotCommandsQuery final : public Td::ResultHandler {
       return on_error(result_ptr.move_as_error());
     }
 
-    BotCommands commands(td_->contacts_manager_->get_my_id(), result_ptr.move_as_ok());
+    BotCommands commands(td_->user_manager_->get_my_id(), result_ptr.move_as_ok());
     promise_.set_value(commands.get_bot_commands_object(td_));
   }
 
@@ -134,30 +137,37 @@ BotCommands::BotCommands(UserId bot_user_id, vector<telegram_api::object_ptr<tel
 td_api::object_ptr<td_api::botCommands> BotCommands::get_bot_commands_object(Td *td) const {
   auto commands = transform(commands_, [](const auto &command) { return command.get_bot_command_object(); });
   return td_api::make_object<td_api::botCommands>(
-      td->contacts_manager_->get_user_id_object(bot_user_id_, "get_bot_commands_object"), std::move(commands));
+      td->user_manager_->get_user_id_object(bot_user_id_, "get_bot_commands_object"), std::move(commands));
+}
+
+bool BotCommands::update_all_bot_commands(vector<BotCommands> &all_bot_commands, BotCommands &&bot_commands) {
+  auto is_from_bot = [bot_user_id = bot_commands.bot_user_id_](const BotCommands &commands) {
+    return commands.bot_user_id_ == bot_user_id;
+  };
+
+  if (bot_commands.commands_.empty()) {
+    return td::remove_if(all_bot_commands, is_from_bot);
+  }
+  auto it = std::find_if(all_bot_commands.begin(), all_bot_commands.end(), is_from_bot);
+  if (it != all_bot_commands.end()) {
+    if (*it != bot_commands) {
+      *it = std::move(bot_commands);
+      return true;
+    }
+    return false;
+  }
+  all_bot_commands.push_back(std::move(bot_commands));
+  return true;
 }
 
 bool operator==(const BotCommands &lhs, const BotCommands &rhs) {
   return lhs.bot_user_id_ == rhs.bot_user_id_ && lhs.commands_ == rhs.commands_;
 }
 
-static bool is_valid_language_code(const string &language_code) {
-  if (language_code.empty()) {
-    return true;
-  }
-  if (language_code.size() != 2) {
-    return false;
-  }
-  return 'a' <= language_code[0] && language_code[0] <= 'z' && 'a' <= language_code[1] && language_code[1] <= 'z';
-}
-
 void set_commands(Td *td, td_api::object_ptr<td_api::BotCommandScope> &&scope_ptr, string &&language_code,
                   vector<td_api::object_ptr<td_api::botCommand>> &&commands, Promise<Unit> &&promise) {
   TRY_RESULT_PROMISE(promise, scope, BotCommandScope::get_bot_command_scope(td, std::move(scope_ptr)));
-
-  if (!is_valid_language_code(language_code)) {
-    return promise.set_error(Status::Error(400, "Invalid language code specified"));
-  }
+  TRY_STATUS_PROMISE(promise, validate_bot_language_code(language_code));
 
   vector<BotCommand> new_commands;
   for (auto &command : commands) {
@@ -204,10 +214,7 @@ void set_commands(Td *td, td_api::object_ptr<td_api::BotCommandScope> &&scope_pt
 void delete_commands(Td *td, td_api::object_ptr<td_api::BotCommandScope> &&scope_ptr, string &&language_code,
                      Promise<Unit> &&promise) {
   TRY_RESULT_PROMISE(promise, scope, BotCommandScope::get_bot_command_scope(td, std::move(scope_ptr)));
-
-  if (!is_valid_language_code(language_code)) {
-    return promise.set_error(Status::Error(400, "Invalid language code specified"));
-  }
+  TRY_STATUS_PROMISE(promise, validate_bot_language_code(language_code));
 
   td->create_handler<ResetBotCommandsQuery>(std::move(promise))->send(scope, language_code);
 }
@@ -215,10 +222,7 @@ void delete_commands(Td *td, td_api::object_ptr<td_api::BotCommandScope> &&scope
 void get_commands(Td *td, td_api::object_ptr<td_api::BotCommandScope> &&scope_ptr, string &&language_code,
                   Promise<td_api::object_ptr<td_api::botCommands>> &&promise) {
   TRY_RESULT_PROMISE(promise, scope, BotCommandScope::get_bot_command_scope(td, std::move(scope_ptr)));
-
-  if (!is_valid_language_code(language_code)) {
-    return promise.set_error(Status::Error(400, "Invalid language code specified"));
-  }
+  TRY_STATUS_PROMISE(promise, validate_bot_language_code(language_code));
 
   td->create_handler<GetBotCommandsQuery>(std::move(promise))->send(scope, language_code);
 }

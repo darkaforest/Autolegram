@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -10,6 +10,7 @@
 #include "td/actor/impl/ActorInfo-decl.h"
 #include "td/actor/impl/Event.h"
 
+#include "td/utils/common.h"
 #include "td/utils/ObjectPool.h"
 #include "td/utils/Observer.h"
 #include "td/utils/Slice.h"
@@ -79,10 +80,8 @@ class Actor : public ObserverBase {
   std::shared_ptr<ActorContext> set_context(std::shared_ptr<ActorContext> context);
   string set_tag(string tag);
 
-  void always_wait_for_mailbox();
-
   // for ActorInfo mostly
-  void init(ObjectPool<ActorInfo>::OwnerPtr &&info);
+  void set_info(ObjectPool<ActorInfo>::OwnerPtr &&info);
   ActorInfo *get_info();
   const ActorInfo *get_info() const;
   ObjectPool<ActorInfo>::OwnerPtr clear();
@@ -96,7 +95,7 @@ class Actor : public ObserverBase {
   auto self_closure(SelfT *self, FuncT &&func, ArgsT &&...args);
 
   template <class LambdaT>
-  auto self_lambda(LambdaT &&lambda);
+  auto self_lambda(LambdaT &&func);
 
   // proxy to info_
   ActorId<> actor_id();

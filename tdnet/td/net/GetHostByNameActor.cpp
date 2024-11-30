@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -7,7 +7,7 @@
 #include "td/net/GetHostByNameActor.h"
 
 #include "td/net/HttpQuery.h"
-#include "td/net/SslStream.h"
+#include "td/net/SslCtx.h"
 #include "td/net/Wget.h"
 
 #include "td/utils/common.h"
@@ -51,7 +51,7 @@ class GoogleDnsResolver final : public Actor {
         "GoogleDnsResolver", std::move(wget_promise),
         PSTRING() << "https://dns.google/resolve?name=" << url_encode(host_) << "&type=" << (prefer_ipv6_ ? 28 : 1),
         std::vector<std::pair<string, string>>({{"Host", "dns.google"}}), timeout, ttl, prefer_ipv6_,
-        SslStream::VerifyPeer::Off);
+        SslCtx::VerifyPeer::Off);
   }
 
   static Result<IPAddress> get_ip_address(Result<unique_ptr<HttpQuery>> r_http_query) {
@@ -66,7 +66,7 @@ class GoogleDnsResolver final : public Actor {
         return Status::Error("Failed to parse DNS result: Answer[0] is not an object");
       }
       auto &answer_0 = array[0].get_object();
-      TRY_RESULT(ip_str, get_json_object_string_field(answer_0, "data", false));
+      TRY_RESULT(ip_str, answer_0.get_required_string_field("data"));
       IPAddress ip;
       TRY_STATUS(ip.init_host_port(ip_str, 0));
       return ip;
@@ -82,7 +82,8 @@ class GoogleDnsResolver final : public Actor {
       if (json_value.type() != JsonValue::Type::Object) {
         return Status::Error("Failed to parse DNS result: not an object");
       }
-      TRY_RESULT(answer, get_json_object_field(json_value.get_object(), "Answer", JsonValue::Type::Array, false));
+      auto &object = json_value.get_object();
+      TRY_RESULT(answer, object.extract_required_field("Answer", JsonValue::Type::Array));
       return get_ip_address(answer);
     }
   }
@@ -133,11 +134,7 @@ GetHostByNameActor::GetHostByNameActor(Options options) : options_(std::move(opt
 }
 
 void GetHostByNameActor::run(string host, int port, bool prefer_ipv6, Promise<IPAddress> promise) {
-  auto r_ascii_host = idn_to_ascii(host);
-  if (r_ascii_host.is_error()) {
-    return promise.set_error(r_ascii_host.move_as_error());
-  }
-  auto ascii_host = r_ascii_host.move_as_ok();
+  TRY_RESULT_PROMISE(promise, ascii_host, idn_to_ascii(host));
   if (ascii_host.empty()) {
     return promise.set_error(Status::Error("Host is empty"));
   }

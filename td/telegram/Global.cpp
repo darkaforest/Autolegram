@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -9,10 +9,12 @@
 #include "td/telegram/AuthManager.h"
 #include "td/telegram/net/ConnectionCreator.h"
 #include "td/telegram/net/NetQueryDispatcher.h"
+#include "td/telegram/net/NetQueryStats.h"
 #include "td/telegram/net/TempAuthKeyWatchdog.h"
 #include "td/telegram/OptionManager.h"
 #include "td/telegram/StateManager.h"
 #include "td/telegram/TdDb.h"
+#include "td/telegram/UpdatesManager.h"
 
 #include "td/utils/format.h"
 #include "td/utils/logging.h"
@@ -24,7 +26,13 @@
 
 namespace td {
 
-Global::Global() = default;
+Global::Global() {
+  auto current_scheduler_id = Scheduler::instance()->sched_id();
+  auto max_scheduler_id = Scheduler::instance()->sched_count() - 1;
+  database_scheduler_id_ = min(current_scheduler_id + 1, max_scheduler_id);
+  gc_scheduler_id_ = min(current_scheduler_id + 2, max_scheduler_id);
+  slow_net_scheduler_id_ = min(current_scheduler_id + 3, max_scheduler_id);
+}
 
 Global::~Global() = default;
 
@@ -32,16 +40,10 @@ void Global::log_out(Slice reason) {
   send_closure(auth_manager_, &AuthManager::on_authorization_lost, reason.str());
 }
 
-void Global::close_all(Promise<> on_finished) {
-  td_db_->close_all(std::move(on_finished));
+void Global::close_all(bool destroy_flag, Promise<Unit> on_finished) {
+  td_db_->close(use_sqlite_pmc() ? get_database_scheduler_id() : get_slow_net_scheduler_id(), destroy_flag,
+                std::move(on_finished));
   state_manager_.clear();
-  parameters_ = TdParameters();
-}
-
-void Global::close_and_destroy_all(Promise<> on_finished) {
-  td_db_->close_and_destroy_all(std::move(on_finished));
-  state_manager_.clear();
-  parameters_ = TdParameters();
 }
 
 ActorId<ConnectionCreator> Global::connection_creator() const {
@@ -87,12 +89,7 @@ struct ServerTimeDiff {
   }
 };
 
-Status Global::init(const TdParameters &parameters, ActorId<Td> td, unique_ptr<TdDb> td_db_ptr) {
-  parameters_ = parameters;
-
-  gc_scheduler_id_ = min(Scheduler::instance()->sched_id() + 2, Scheduler::instance()->sched_count() - 1);
-  slow_net_scheduler_id_ = min(Scheduler::instance()->sched_id() + 3, Scheduler::instance()->sched_count() - 1);
-
+Status Global::init(ActorId<Td> td, unique_ptr<TdDb> td_db_ptr) {
   td_ = td;
   td_db_ = std::move(td_db_ptr);
 
@@ -137,6 +134,34 @@ Status Global::init(const TdParameters &parameters, ActorId<Td> td, unique_ptr<T
   return Status::OK();
 }
 
+Slice Global::get_dir() const {
+  return td_db_->get_database_directory();
+}
+
+Slice Global::get_files_dir() const {
+  return td_db_->get_files_directory();
+}
+
+bool Global::is_test_dc() const {
+  return td_db_->is_test_dc();
+}
+
+bool Global::use_file_database() const {
+  return td_db_->use_file_database();
+}
+
+bool Global::use_sqlite_pmc() const {
+  return td_db_->use_sqlite_pmc();
+}
+
+bool Global::use_chat_info_database() const {
+  return td_db_->use_chat_info_database();
+}
+
+bool Global::use_message_database() const {
+  return td_db_->use_message_database();
+}
+
 int32 Global::get_retry_after(int32 error_code, Slice error_message) {
   if (error_code != 429) {
     return 0;
@@ -161,8 +186,8 @@ int32 Global::to_unix_time(double server_time) const {
   return static_cast<int32>(server_time);
 }
 
-void Global::update_server_time_difference(double diff) {
-  if (!server_time_difference_was_updated_ || server_time_difference_ < diff) {
+void Global::update_server_time_difference(double diff, bool force) {
+  if (force || !server_time_difference_was_updated_ || server_time_difference_ < diff) {
     server_time_difference_ = diff;
     server_time_difference_was_updated_ = true;
     do_save_server_time_difference();
@@ -231,10 +256,6 @@ DcId Global::get_webfile_dc_id() const {
   }
 
   return DcId::internal(dc_id);
-}
-
-bool Global::ignore_background_updates() const {
-  return !parameters_.use_file_db && !parameters_.use_secret_chats && get_option_boolean("ignore_background_updates");
 }
 
 void Global::set_net_query_stats(std::shared_ptr<NetQueryStats> net_query_stats) {
@@ -322,6 +343,10 @@ void Global::add_location_access_hash(double latitude, double longitude, int64 a
   }
 
   location_access_hashes_[get_location_key(latitude, longitude)] = access_hash;
+}
+
+void Global::notify_speed_limited(bool is_upload) {
+  send_closure(updates_manager_, &UpdatesManager::notify_speed_limited, is_upload);
 }
 
 double get_global_server_time() {

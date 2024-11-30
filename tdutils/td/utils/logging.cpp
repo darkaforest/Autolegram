@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -80,7 +80,7 @@ Logger::Logger(LogInterface &log, const LogOptions &options, int log_level, Slic
   }
   sb_ << ']';
 
-  // thread id
+  // thread identifier
   auto thread_id = get_thread_id();
   sb_ << "[t";
   if (static_cast<uint32>(thread_id) < 10) {
@@ -191,8 +191,7 @@ class DefaultLog final : public LogInterface {
 #elif TD_EMSCRIPTEN
     switch (log_level) {
       case VERBOSITY_NAME(FATAL):
-        emscripten_log(EM_LOG_ERROR | EM_LOG_CONSOLE | EM_LOG_C_STACK | EM_LOG_JS_STACK | EM_LOG_FUNC_PARAMS, "%s",
-                       slice.c_str());
+        emscripten_log(EM_LOG_ERROR | EM_LOG_CONSOLE | EM_LOG_C_STACK | EM_LOG_JS_STACK, "%s", slice.c_str());
         EM_ASM(throw(UTF8ToString($0)), slice.c_str());
         break;
       case VERBOSITY_NAME(ERROR):
@@ -248,6 +247,26 @@ void process_fatal_error(CSlice message) {
   }
 
   std::abort();
+}
+
+static std::atomic<uint32> log_guard;
+
+LogGuard::LogGuard() {
+  uint32 expected = 0;
+  while (!log_guard.compare_exchange_strong(expected, 1, std::memory_order_relaxed, std::memory_order_relaxed)) {
+    // spin
+    CHECK(expected == 1);
+    expected = 0;
+  }
+}
+
+LogGuard::~LogGuard() {
+  CHECK(log_guard.load(std::memory_order_relaxed) == 1);
+  log_guard.store(0, std::memory_order_relaxed);
+}
+
+bool has_log_guard() {
+  return log_guard.load(std::memory_order_relaxed) == 1;
 }
 
 namespace {

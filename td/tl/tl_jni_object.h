@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -33,11 +33,15 @@ extern jmethodID IntegerGetValueMethodID;
 extern jmethodID LongGetValueMethodID;
 extern jmethodID DoubleGetValueMethodID;
 
+void set_fatal_error(JNIEnv *env, const std::string &error);
+
 jclass get_jclass(JNIEnv *env, const char *class_name);
 
 jmethodID get_method_id(JNIEnv *env, jclass clazz, const char *name, const char *signature);
 
 jfieldID get_field_id(JNIEnv *env, jclass clazz, const char *name, const char *signature);
+
+jfieldID get_static_field_id(JNIEnv *env, jclass clazz, const char *name, const char *signature);
 
 void register_native_method(JNIEnv *env, jclass clazz, std::string name, std::string signature, void *function_ptr);
 
@@ -55,12 +59,12 @@ class JvmThreadDetacher {
   explicit JvmThreadDetacher(JavaVM *java_vm) : java_vm_(java_vm) {
   }
 
-  JvmThreadDetacher(const JvmThreadDetacher &other) = delete;
-  JvmThreadDetacher &operator=(const JvmThreadDetacher &other) = delete;
+  JvmThreadDetacher(const JvmThreadDetacher &) = delete;
+  JvmThreadDetacher &operator=(const JvmThreadDetacher &) = delete;
   JvmThreadDetacher(JvmThreadDetacher &&other) : java_vm_(other.java_vm_) {
     other.java_vm_ = nullptr;
   }
-  JvmThreadDetacher &operator=(JvmThreadDetacher &&other) = delete;
+  JvmThreadDetacher &operator=(JvmThreadDetacher &&) = delete;
   ~JvmThreadDetacher() {
     detach();
   }
@@ -73,6 +77,8 @@ class JvmThreadDetacher {
 std::unique_ptr<JNIEnv, JvmThreadDetacher> get_jni_env(JavaVM *java_vm, jint jni_version);
 
 std::string fetch_string(JNIEnv *env, jobject o, jfieldID id);
+
+std::string fetch_static_string(JNIEnv *env, jclass clazz, jfieldID id);
 
 inline jobject fetch_object(JNIEnv *env, const jobject &o, const jfieldID &id) {
   // null return object is implicitly allowed
@@ -108,6 +114,7 @@ jobjectArray store_vector(JNIEnv *env, const std::vector<std::string> &v);
 template <class T>
 jobjectArray store_vector(JNIEnv *env, const std::vector<T> &v) {
   auto length = static_cast<jint>(v.size());
+  T::element_type::init_jni_vars(env);
   jobjectArray arr = env->NewObjectArray(length, T::element_type::Class, jobject());
   if (arr != nullptr) {
     for (jint i = 0; i < length; i++) {

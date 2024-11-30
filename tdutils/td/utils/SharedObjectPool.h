@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -123,10 +123,10 @@ class SharedPtr {
     other.raw_ = nullptr;
     return *this;
   }
-  bool empty() const {
+  bool empty() const noexcept {
     return raw_ == nullptr;
   }
-  explicit operator bool() const {
+  explicit operator bool() const noexcept {
     return !empty();
   }
   uint64 use_cnt() const {
@@ -187,10 +187,10 @@ class SharedObjectPool {
   using Ptr = detail::SharedPtr<DataT, Deleter>;
 
   SharedObjectPool() = default;
-  SharedObjectPool(const SharedObjectPool &other) = delete;
-  SharedObjectPool &operator=(const SharedObjectPool &other) = delete;
-  SharedObjectPool(SharedObjectPool &&other) = delete;
-  SharedObjectPool &operator=(SharedObjectPool &&other) = delete;
+  SharedObjectPool(const SharedObjectPool &) = delete;
+  SharedObjectPool &operator=(const SharedObjectPool &) = delete;
+  SharedObjectPool(SharedObjectPool &&) = delete;
+  SharedObjectPool &operator=(SharedObjectPool &&) = delete;
   ~SharedObjectPool() {
     free_queue_.pop_all(free_queue_reader_);
     size_t free_cnt = 0;
@@ -214,7 +214,7 @@ class SharedObjectPool {
     return free_queue_reader_.calc_size();
   }
 
-  //non thread safe
+  // non-thread-safe
   template <class F>
   void for_each(F &&f) {
     for (auto &raw : allocated_) {
@@ -255,7 +255,7 @@ class SharedObjectPool {
     Raw *get() const {
       return raw_;
     }
-    explicit operator bool() const {
+    explicit operator bool() const noexcept {
       return raw_ != nullptr;
     }
 

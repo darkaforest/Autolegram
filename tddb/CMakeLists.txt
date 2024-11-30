@@ -2,11 +2,12 @@ if ((CMAKE_MAJOR_VERSION LESS 3) OR (CMAKE_VERSION VERSION_LESS "3.0.2"))
   message(FATAL_ERROR "CMake >= 3.0.2 is required")
 endif()
 
+option(TDDB_ENABLE_INSTALL "Enable installation of the library." ON)
+
 if (NOT DEFINED CMAKE_INSTALL_LIBDIR)
   set(CMAKE_INSTALL_LIBDIR "lib")
 endif()
 
-#SOURCE SETS
 set(TDDB_SOURCE
   td/db/binlog/Binlog.cpp
   td/db/binlog/BinlogEvent.cpp
@@ -14,14 +15,14 @@ set(TDDB_SOURCE
   td/db/binlog/detail/BinlogEventsBuffer.cpp
   td/db/binlog/detail/BinlogEventsProcessor.cpp
 
+  td/db/detail/RawSqliteDb.cpp
+
   td/db/SqliteConnectionSafe.cpp
   td/db/SqliteDb.cpp
   td/db/SqliteKeyValue.cpp
   td/db/SqliteKeyValueAsync.cpp
   td/db/SqliteStatement.cpp
   td/db/TQueue.cpp
-
-  td/db/detail/RawSqliteDb.cpp
 
   td/db/binlog/Binlog.h
   td/db/binlog/BinlogEvent.h
@@ -56,7 +57,9 @@ if (NOT CMAKE_CROSSCOMPILING)
   target_link_libraries(binlog_dump PRIVATE tddb)
 endif()
 
-install(TARGETS tddb EXPORT TdTargets
-  LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
-  ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
-)
+if (TDDB_ENABLE_INSTALL)
+  install(TARGETS tddb EXPORT TdStaticTargets
+    LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+    ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+  )
+endif()

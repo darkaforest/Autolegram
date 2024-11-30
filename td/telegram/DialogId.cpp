@@ -1,13 +1,12 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 //
 #include "td/telegram/DialogId.h"
 
-#include "td/telegram/telegram_api.h"
-
+#include "td/utils/algorithm.h"
 #include "td/utils/logging.h"
 
 #include <limits>
@@ -149,6 +148,40 @@ int64 DialogId::get_peer_id(const tl_object_ptr<telegram_api::Peer> &peer) {
       UNREACHABLE();
       return 0;
   }
+}
+
+DialogId DialogId::get_message_dialog_id(const telegram_api::Message *message_ptr) {
+  CHECK(message_ptr != nullptr);
+  switch (message_ptr->get_id()) {
+    case telegram_api::messageEmpty::ID: {
+      auto message = static_cast<const telegram_api::messageEmpty *>(message_ptr);
+      return message->peer_id_ == nullptr ? DialogId() : DialogId(message->peer_id_);
+    }
+    case telegram_api::message::ID: {
+      auto message = static_cast<const telegram_api::message *>(message_ptr);
+      return DialogId(message->peer_id_);
+    }
+    case telegram_api::messageService::ID: {
+      auto message = static_cast<const telegram_api::messageService *>(message_ptr);
+      return DialogId(message->peer_id_);
+    }
+    default:
+      UNREACHABLE();
+      return DialogId();
+  }
+}
+
+DialogId DialogId::get_message_dialog_id(const tl_object_ptr<telegram_api::Message> &message_ptr) {
+  return get_message_dialog_id(message_ptr.get());
+}
+
+vector<DialogId> DialogId::get_dialog_ids(const vector<int64> &chat_ids) {
+  return transform(chat_ids, [](int64 chat_id) { return DialogId(chat_id); });
+}
+
+vector<DialogId> DialogId::remove_secret_chat_dialog_ids(vector<DialogId> dialog_ids) {
+  td::remove_if(dialog_ids, [](DialogId dialog_id) { return dialog_id.get_type() == DialogType::SecretChat; });
+  return dialog_ids;
 }
 
 }  // namespace td

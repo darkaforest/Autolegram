@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -13,14 +13,16 @@
 #include "td/telegram/Version.h"
 
 #include "td/utils/common.h"
+#include "td/utils/HashTableUtils.h"
 #include "td/utils/Status.h"
 #include "td/utils/StringBuilder.h"
 #include "td/utils/tl_helpers.h"
 
-#include <functional>
 #include <tuple>
 
 namespace td {
+
+class Td;
 
 class Contact {
   string phone_number_;
@@ -52,7 +54,7 @@ class Contact {
 
   const string &get_last_name() const;
 
-  tl_object_ptr<td_api::contact> get_contact_object() const;
+  tl_object_ptr<td_api::contact> get_contact_object(Td *td) const;
 
   tl_object_ptr<telegram_api::inputMediaContact> get_input_media_contact() const;
 
@@ -128,24 +130,22 @@ bool operator!=(const Contact &lhs, const Contact &rhs);
 StringBuilder &operator<<(StringBuilder &string_builder, const Contact &contact);
 
 struct ContactEqual {
-  std::size_t operator()(const Contact &lhs, const Contact &rhs) const {
+  bool operator()(const Contact &lhs, const Contact &rhs) const {
     return std::tie(lhs.phone_number_, lhs.first_name_, lhs.last_name_) ==
            std::tie(rhs.phone_number_, rhs.first_name_, rhs.last_name_);
   }
 };
 
 struct ContactHash {
-  std::size_t operator()(const Contact &contact) const {
-    return (std::hash<std::string>()(contact.phone_number_) * 2023654985u +
-            std::hash<std::string>()(contact.first_name_)) *
-               2023654985u +
-           std::hash<std::string>()(contact.last_name_);
+  uint32 operator()(const Contact &contact) const {
+    return combine_hashes(combine_hashes(Hash<string>()(contact.phone_number_), Hash<string>()(contact.first_name_)),
+                          Hash<string>()(contact.last_name_));
   }
 };
 
-Result<Contact> get_contact(td_api::object_ptr<td_api::contact> &&contact) TD_WARN_UNUSED_RESULT;
+Result<Contact> get_contact(Td *td, td_api::object_ptr<td_api::contact> &&contact) TD_WARN_UNUSED_RESULT;
 
-Result<Contact> process_input_message_contact(tl_object_ptr<td_api::InputMessageContent> &&input_message_content)
-    TD_WARN_UNUSED_RESULT;
+Result<Contact> process_input_message_contact(
+    Td *td, td_api::object_ptr<td_api::InputMessageContent> &&input_message_content) TD_WARN_UNUSED_RESULT;
 
 }  // namespace td

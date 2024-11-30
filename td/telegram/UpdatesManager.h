@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -9,8 +9,8 @@
 #include "td/telegram/ChannelId.h"
 #include "td/telegram/ChatId.h"
 #include "td/telegram/DialogId.h"
-#include "td/telegram/FullMessageId.h"
 #include "td/telegram/InputGroupCallId.h"
+#include "td/telegram/MessageFullId.h"
 #include "td/telegram/MessageId.h"
 #include "td/telegram/PtsManager.h"
 #include "td/telegram/telegram_api.h"
@@ -20,6 +20,7 @@
 #include "td/actor/Timeout.h"
 
 #include "td/utils/common.h"
+#include "td/utils/FlatHashMap.h"
 #include "td/utils/FlatHashSet.h"
 #include "td/utils/logging.h"
 #include "td/utils/Promise.h"
@@ -28,6 +29,8 @@
 #include "td/utils/TlStorerToString.h"
 
 #include <map>
+#include <set>
+#include <utility>
 
 namespace td {
 
@@ -99,9 +102,17 @@ class UpdatesManager final : public Actor {
   void add_pending_pts_update(tl_object_ptr<telegram_api::Update> &&update, int32 new_pts, int32 pts_count,
                               double receive_time, Promise<Unit> &&promise, const char *source);
 
+  size_t get_pending_pts_update_count();
+
+  static bool are_empty_updates(const telegram_api::Updates *updates_ptr);
+
   static FlatHashSet<int64> get_sent_messages_random_ids(const telegram_api::Updates *updates_ptr);
 
-  static vector<const tl_object_ptr<telegram_api::Message> *> get_new_messages(
+  static const telegram_api::Message *get_message_by_random_id(const telegram_api::Updates *updates_ptr,
+                                                               DialogId dialog_id, int64 random_id);
+
+  // [Message, is_scheduled]
+  static vector<std::pair<const telegram_api::Message *, bool>> get_new_messages(
       const telegram_api::Updates *updates_ptr);
 
   static vector<InputGroupCallId> get_update_new_group_call_ids(const telegram_api::Updates *updates_ptr);
@@ -112,13 +123,17 @@ class UpdatesManager final : public Actor {
 
   static vector<DialogId> get_chat_dialog_ids(const telegram_api::Updates *updates_ptr);
 
-  static int32 get_update_edit_message_pts(const telegram_api::Updates *updates_ptr, FullMessageId full_message_id);
+  static int32 get_update_edit_message_pts(const telegram_api::Updates *updates_ptr, MessageFullId message_full_id);
 
   void get_difference(const char *source);
 
   void schedule_get_difference(const char *source);
 
+  void on_update_from_auth_key_id(uint64 auth_key_id);
+
   void ping_server();
+
+  void notify_speed_limited(bool is_upload);
 
   bool running_get_difference() const {
     return running_get_difference_;
@@ -129,20 +144,38 @@ class UpdatesManager final : public Actor {
  private:
   static constexpr int32 FORCED_GET_DIFFERENCE_PTS_DIFF = 100000;
   static constexpr int32 GAP_TIMEOUT_UPDATE_COUNT = 20;
-  static const double MAX_UNFILLED_GAP_TIME;
-  static const double MAX_PTS_SAVE_DELAY;
+  static constexpr double MIN_UNFILLED_GAP_TIME = 0.05;
+  static constexpr double MAX_UNFILLED_GAP_TIME = 0.7;
+  static constexpr double MAX_PTS_SAVE_DELAY = 0.05;
+  static constexpr double UPDATE_APPLY_WARNING_TIME = 0.1;
   static constexpr bool DROP_PTS_UPDATES = false;
   static constexpr const char *AFTER_GET_DIFFERENCE_SOURCE = "after get difference";
 
-  friend class OnUpdate;
+  class OnUpdate {
+    UpdatesManager *updates_manager_;
+    telegram_api::object_ptr<telegram_api::Update> &update_;
+    mutable Promise<Unit> promise_;
+
+   public:
+    OnUpdate(UpdatesManager *updates_manager, telegram_api::object_ptr<telegram_api::Update> &update,
+             Promise<Unit> &&promise)
+        : updates_manager_(updates_manager), update_(update), promise_(std::move(promise)) {
+    }
+
+    template <class T>
+    void operator()(T &obj) const {
+      CHECK(&*update_ == &obj);
+      updates_manager_->on_update(move_tl_object_as<T>(update_), std::move(promise_));
+    }
+  };
 
   class PendingPtsUpdate {
    public:
-    tl_object_ptr<telegram_api::Update> update;
+    mutable tl_object_ptr<telegram_api::Update> update;
     int32 pts;
     int32 pts_count;
     double receive_time;
-    Promise<Unit> promise;
+    mutable Promise<Unit> promise;
 
     PendingPtsUpdate(tl_object_ptr<telegram_api::Update> &&update, int32 pts, int32 pts_count, double receive_time,
                      Promise<Unit> &&promise)
@@ -152,6 +185,13 @@ class UpdatesManager final : public Actor {
         , receive_time(receive_time)
         , promise(std::move(promise)) {
     }
+
+    bool operator<(const PendingPtsUpdate &other) const {
+      if (pts != other.pts) {
+        return pts < other.pts;
+      }
+      return other.pts_count < pts_count;
+    }
   };
 
   class PendingSeqUpdates {
@@ -160,8 +200,8 @@ class UpdatesManager final : public Actor {
     int32 seq_end;
     int32 date;
     double receive_time;
-    vector<tl_object_ptr<telegram_api::Update>> updates;
-    Promise<Unit> promise;
+    mutable vector<tl_object_ptr<telegram_api::Update>> updates;
+    mutable Promise<Unit> promise;
 
     PendingSeqUpdates(int32 seq_begin, int32 seq_end, int32 date, double receive_time,
                       vector<tl_object_ptr<telegram_api::Update>> &&updates, Promise<Unit> &&promise)
@@ -171,6 +211,13 @@ class UpdatesManager final : public Actor {
         , receive_time(receive_time)
         , updates(std::move(updates))
         , promise(std::move(promise)) {
+    }
+
+    bool operator<(const PendingSeqUpdates &other) const {
+      if (seq_begin != other.seq_begin) {
+        return seq_begin < other.seq_begin;
+      }
+      return other.seq_end < seq_end;
     }
   };
 
@@ -196,6 +243,15 @@ class UpdatesManager final : public Actor {
   int32 pending_pts_ = 0;
   int32 pending_qts_ = 0;
 
+  int32 pts_short_gap_ = 0;
+  int32 pts_fixed_short_gap_ = 0;
+  int32 pts_gap_ = 0;
+  int32 pts_diff_ = 0;
+  int32 last_fetched_pts_ = 0;
+
+  int32 qts_gap_ = 0;
+  int32 qts_diff_ = 0;
+
   int64 being_processed_updates_ = 0;
 
   int32 short_update_date_ = 0;
@@ -205,14 +261,15 @@ class UpdatesManager final : public Actor {
   double last_pts_jump_warning_time_ = 0;
   double last_pts_gap_time_ = 0;
 
-  std::multimap<int32, PendingPtsUpdate> pending_pts_updates_;
-  std::multimap<int32, PendingPtsUpdate> postponed_pts_updates_;
+  std::multiset<PendingPtsUpdate> pending_pts_updates_;    // updates waiting PTS gap fill
+  std::multiset<PendingPtsUpdate> postponed_pts_updates_;  // updates waiting the end of getDifference
 
-  std::multimap<int32, PendingSeqUpdates> postponed_updates_;    // updates received during getDifference
-  std::multimap<int32, PendingSeqUpdates> pending_seq_updates_;  // updates with too big seq
+  std::multiset<PendingSeqUpdates> postponed_updates_;    // updates received during getDifference
+  std::multiset<PendingSeqUpdates> pending_seq_updates_;  // updates with too big seq
 
-  std::map<int32, PendingQtsUpdate> pending_qts_updates_;  // updates with too big qts
+  std::map<int32, PendingQtsUpdate> pending_qts_updates_;  // updates with too big QTS
 
+  Timeout min_pts_gap_timeout_;
   Timeout pts_gap_timeout_;
 
   Timeout seq_gap_timeout_;
@@ -225,12 +282,26 @@ class UpdatesManager final : public Actor {
   double next_data_reload_time_ = 0.0;
   Timeout data_reload_timeout_;
 
+  bool is_ping_sent_ = false;
+
+  bool expect_pts_gap_ = false;
   bool running_get_difference_ = false;
-  int32 last_get_difference_pts_ = 0;
-  int32 last_get_difference_qts_ = 0;
+  int32 skipped_postponed_updates_after_start_ = 50000;
+  int32 last_confirmed_pts_ = 0;
+  int32 last_confirmed_qts_ = 0;
   int32 min_postponed_update_pts_ = 0;
   int32 min_postponed_update_qts_ = 0;
   double get_difference_start_time_ = 0;  // time from which we started to get difference without success
+  int32 get_difference_retry_count_ = 0;
+
+  struct SessionInfo {
+    uint64 update_count = 0;
+    double first_update_time = 0.0;
+    double last_update_time = 0.0;
+  };
+  FlatHashMap<uint64, SessionInfo> session_infos_;
+
+  double next_notify_speed_limited_[2] = {0.0, 0.0};
 
   void start_up() final;
 
@@ -261,6 +332,14 @@ class UpdatesManager final : public Actor {
   void on_qts_ack(PtsManager::PtsId ack_token);
   void save_qts(int32 qts);
 
+  bool can_postpone_updates() {
+    if (skipped_postponed_updates_after_start_ == 0) {
+      return true;
+    }
+    skipped_postponed_updates_after_start_--;
+    return false;
+  }
+
   void set_date(int32 date, bool from_update, string date_source);
 
   int32 get_short_update_date() const;
@@ -268,6 +347,8 @@ class UpdatesManager final : public Actor {
   void init_state();
 
   void on_get_updates_state(tl_object_ptr<telegram_api::updates_state> &&state, const char *source);
+
+  void on_get_updates_impl(tl_object_ptr<telegram_api::Updates> updates_ptr, Promise<Unit> promise);
 
   void on_server_pong(tl_object_ptr<telegram_api::updates_state> &&state);
 
@@ -312,6 +393,8 @@ class UpdatesManager final : public Actor {
 
   void process_pending_qts_updates();
 
+  static void check_pts_gap(void *td);
+
   static void fill_pts_gap(void *td);
 
   static void fill_seq_gap(void *td);
@@ -320,7 +403,11 @@ class UpdatesManager final : public Actor {
 
   static void fill_get_difference_gap(void *td);
 
-  static void fill_gap(void *td, const char *source);
+  static void fill_gap(void *td, const string &source);
+
+  void repair_pts_gap();
+
+  void on_get_pts_update(int32 pts, telegram_api::object_ptr<telegram_api::updates_Difference> difference_ptr);
 
   void set_pts_gap_timeout(double timeout);
 
@@ -329,6 +416,8 @@ class UpdatesManager final : public Actor {
   void set_qts_gap_timeout(double timeout);
 
   void run_get_difference(bool is_recursive, const char *source);
+
+  void confirm_pts_qts(int32 qts);
 
   void on_failed_get_updates_state(Status &&error);
 
@@ -343,6 +432,10 @@ class UpdatesManager final : public Actor {
   static void try_reload_data_static(void *td);
 
   void try_reload_data();
+
+  void on_data_reloaded();
+
+  uint64 get_most_unused_auth_key_id();
 
   static vector<int32> get_update_ids(const telegram_api::Updates *updates_ptr);
 
@@ -362,6 +455,8 @@ class UpdatesManager final : public Actor {
 
   static bool is_channel_pts_update(const telegram_api::Update *update);
 
+  static bool is_additional_service_message(const telegram_api::Message *message);
+
   static const vector<tl_object_ptr<telegram_api::Update>> *get_updates(const telegram_api::Updates *updates_ptr);
 
   static vector<tl_object_ptr<telegram_api::Update>> *get_updates(telegram_api::Updates *updates_ptr);
@@ -379,14 +474,18 @@ class UpdatesManager final : public Actor {
   bool is_acceptable_reply_markup(const tl_object_ptr<telegram_api::ReplyMarkup> &reply_markup) const;
 
   bool is_acceptable_message_reply_header(
-      const telegram_api::object_ptr<telegram_api::messageReplyHeader> &header) const;
+      const telegram_api::object_ptr<telegram_api::MessageReplyHeader> &header) const;
 
   bool is_acceptable_message_forward_header(
       const telegram_api::object_ptr<telegram_api::messageFwdHeader> &header) const;
 
+  bool is_acceptable_message_media(const telegram_api::object_ptr<telegram_api::MessageMedia> &media_ptr) const;
+
   bool is_acceptable_message(const telegram_api::Message *message_ptr) const;
 
   bool is_acceptable_update(const telegram_api::Update *update) const;
+
+  static int32 fix_short_message_flags(int32 flags);
 
   void on_update(tl_object_ptr<telegram_api::updateNewMessage> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updateMessageID> update, Promise<Unit> &&promise);
@@ -408,6 +507,10 @@ class UpdatesManager final : public Actor {
 
   void on_update(tl_object_ptr<telegram_api::updateRecentReactions> update, Promise<Unit> &&promise);
 
+  void on_update(tl_object_ptr<telegram_api::updateSavedReactionTags> update, Promise<Unit> &&promise);
+
+  void on_update(tl_object_ptr<telegram_api::updatePaidReactionPrivacy> update, Promise<Unit> &&promise);
+
   void on_update(tl_object_ptr<telegram_api::updateAttachMenuBots> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updateWebViewResultSent> update, Promise<Unit> &&promise);
 
@@ -421,7 +524,7 @@ class UpdatesManager final : public Actor {
   void on_update(tl_object_ptr<telegram_api::updateUserStatus> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updateUserName> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updateUserPhone> update, Promise<Unit> &&promise);
-  void on_update(tl_object_ptr<telegram_api::updateUserPhoto> update, Promise<Unit> &&promise);
+  void on_update(tl_object_ptr<telegram_api::updateUser> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updateUserEmojiStatus> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updateRecentEmojiStatuses> update, Promise<Unit> &&promise);
 
@@ -453,9 +556,13 @@ class UpdatesManager final : public Actor {
   void on_update(tl_object_ptr<telegram_api::updateChannelMessageViews> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updateChannelMessageForwards> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updateChannelAvailableMessages> update, Promise<Unit> &&promise);
+  void on_update(tl_object_ptr<telegram_api::updateChannelViewForumAsMessages> update, Promise<Unit> &&promise);
 
   void on_update(tl_object_ptr<telegram_api::updateReadChannelDiscussionInbox> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updateReadChannelDiscussionOutbox> update, Promise<Unit> &&promise);
+
+  void on_update(tl_object_ptr<telegram_api::updateChannelPinnedTopic> update, Promise<Unit> &&promise);
+  void on_update(tl_object_ptr<telegram_api::updateChannelPinnedTopics> update, Promise<Unit> &&promise);
 
   void on_update(tl_object_ptr<telegram_api::updatePinnedMessages> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updatePinnedChannelMessages> update, Promise<Unit> &&promise);
@@ -466,6 +573,10 @@ class UpdatesManager final : public Actor {
   void on_update(tl_object_ptr<telegram_api::updatePinnedDialogs> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updateDialogUnreadMark> update, Promise<Unit> &&promise);
 
+  void on_update(tl_object_ptr<telegram_api::updateSavedDialogPinned> update, Promise<Unit> &&promise);
+
+  void on_update(tl_object_ptr<telegram_api::updatePinnedSavedDialogs> update, Promise<Unit> &&promise);
+
   void on_update(tl_object_ptr<telegram_api::updateDialogFilter> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updateDialogFilters> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updateDialogFilterOrder> update, Promise<Unit> &&promise);
@@ -475,6 +586,7 @@ class UpdatesManager final : public Actor {
 
   void on_update(tl_object_ptr<telegram_api::updateBotCallbackQuery> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updateInlineBotCallbackQuery> update, Promise<Unit> &&promise);
+  void on_update(tl_object_ptr<telegram_api::updateBusinessBotCallbackQuery> update, Promise<Unit> &&promise);
 
   void on_update(tl_object_ptr<telegram_api::updateFavedStickers> update, Promise<Unit> &&promise);
 
@@ -517,6 +629,7 @@ class UpdatesManager final : public Actor {
   void on_update(tl_object_ptr<telegram_api::updateLangPack> update, Promise<Unit> &&promise);
 
   void on_update(tl_object_ptr<telegram_api::updateGeoLiveViewed> update, Promise<Unit> &&promise);
+  void on_update(tl_object_ptr<telegram_api::updateMessageExtendedMedia> update, Promise<Unit> &&promise);
 
   void on_update(tl_object_ptr<telegram_api::updateMessagePoll> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updateMessagePollVote> update, Promise<Unit> &&promise);
@@ -530,8 +643,14 @@ class UpdatesManager final : public Actor {
   void on_update(tl_object_ptr<telegram_api::updateChatParticipant> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updateChannelParticipant> update, Promise<Unit> &&promise);
   void on_update(tl_object_ptr<telegram_api::updateBotChatInviteRequester> update, Promise<Unit> &&promise);
+  void on_update(tl_object_ptr<telegram_api::updateBotChatBoost> update, Promise<Unit> &&promise);
+  void on_update(tl_object_ptr<telegram_api::updateBotMessageReaction> update, Promise<Unit> &&promise);
+  void on_update(tl_object_ptr<telegram_api::updateBotMessageReactions> update, Promise<Unit> &&promise);
+  void on_update(tl_object_ptr<telegram_api::updateBotPurchasedPaidMedia> update, Promise<Unit> &&promise);
 
   void on_update(tl_object_ptr<telegram_api::updateTheme> update, Promise<Unit> &&promise);
+
+  void on_update(tl_object_ptr<telegram_api::updatePeerWallpaper> update, Promise<Unit> &&promise);
 
   void on_update(tl_object_ptr<telegram_api::updatePendingJoinRequests> update, Promise<Unit> &&promise);
 
@@ -539,7 +658,49 @@ class UpdatesManager final : public Actor {
 
   void on_update(tl_object_ptr<telegram_api::updateTranscribedAudio> update, Promise<Unit> &&promise);
 
+  void on_update(tl_object_ptr<telegram_api::updateAutoSaveSettings> update, Promise<Unit> &&promise);
+
+  void on_update(tl_object_ptr<telegram_api::updateStory> update, Promise<Unit> &&promise);
+
+  void on_update(tl_object_ptr<telegram_api::updateReadStories> update, Promise<Unit> &&promise);
+
+  void on_update(tl_object_ptr<telegram_api::updateStoriesStealthMode> update, Promise<Unit> &&promise);
+
+  void on_update(tl_object_ptr<telegram_api::updateSentStoryReaction> update, Promise<Unit> &&promise);
+
+  void on_update(tl_object_ptr<telegram_api::updateStoryID> update, Promise<Unit> &&promise);
+
+  void on_update(tl_object_ptr<telegram_api::updateNewAuthorization> update, Promise<Unit> &&promise);
+
+  void on_update(tl_object_ptr<telegram_api::updateSmsJob> update, Promise<Unit> &&promise);
+
+  void on_update(tl_object_ptr<telegram_api::updateQuickReplies> update, Promise<Unit> &&promise);
+
+  void on_update(tl_object_ptr<telegram_api::updateNewQuickReply> update, Promise<Unit> &&promise);
+
+  void on_update(tl_object_ptr<telegram_api::updateDeleteQuickReply> update, Promise<Unit> &&promise);
+
+  void on_update(tl_object_ptr<telegram_api::updateQuickReplyMessage> update, Promise<Unit> &&promise);
+
+  void on_update(tl_object_ptr<telegram_api::updateDeleteQuickReplyMessages> update, Promise<Unit> &&promise);
+
+  void on_update(tl_object_ptr<telegram_api::updateBotBusinessConnect> update, Promise<Unit> &&promise);
+
+  void on_update(tl_object_ptr<telegram_api::updateBotNewBusinessMessage> update, Promise<Unit> &&promise);
+
+  void on_update(tl_object_ptr<telegram_api::updateBotEditBusinessMessage> update, Promise<Unit> &&promise);
+
+  void on_update(tl_object_ptr<telegram_api::updateBotDeleteBusinessMessage> update, Promise<Unit> &&promise);
+
+  void on_update(tl_object_ptr<telegram_api::updateBroadcastRevenueTransactions> update, Promise<Unit> &&promise);
+
+  void on_update(tl_object_ptr<telegram_api::updateStarsBalance> update, Promise<Unit> &&promise);
+
+  void on_update(tl_object_ptr<telegram_api::updateStarsRevenueStatus> update, Promise<Unit> &&promise);
+
   // unsupported updates
+
+  void on_update(tl_object_ptr<telegram_api::updateNewStoryReaction> update, Promise<Unit> &&promise);
 };
 
 }  // namespace td

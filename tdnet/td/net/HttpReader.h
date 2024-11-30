@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -27,13 +27,14 @@ class HttpReader {
  public:
   void init(ChainBufferReader *input, size_t max_post_size = std::numeric_limits<size_t>::max(),
             size_t max_files = 100);
+
   Result<size_t> read_next(HttpQuery *query, bool can_be_slow = true) TD_WARN_UNUSED_RESULT;  // TODO move query to init
 
   HttpReader() = default;
-  HttpReader(const HttpReader &other) = delete;
-  HttpReader &operator=(const HttpReader &other) = delete;
-  HttpReader(HttpReader &&other) = delete;
-  HttpReader &operator=(HttpReader &&other) = delete;
+  HttpReader(const HttpReader &) = delete;
+  HttpReader &operator=(const HttpReader &) = delete;
+  HttpReader(HttpReader &&) = delete;
+  HttpReader &operator=(HttpReader &&) = delete;
   ~HttpReader() {
     if (!temp_file_.empty()) {
       clean_temporary_file();
@@ -49,7 +50,7 @@ class HttpReader {
   enum class State { ReadHeaders, ReadContent, ReadContentToFile, ReadArgs, ReadMultipartFormData };
   State state_ = State::ReadHeaders;
   size_t headers_read_length_ = 0;
-  size_t content_length_ = 0;
+  int64 content_length_ = -1;
   ChainBufferReader *input_ = nullptr;
   ByteFlowSource flow_source_;
   HttpChunkedByteFlow chunked_flow_;
@@ -87,12 +88,15 @@ class HttpReader {
   string temp_file_name_;
   int64 file_size_ = 0;
 
+  Result<size_t> do_read_next(bool can_be_slow);
+
   Result<size_t> split_header() TD_WARN_UNUSED_RESULT;
   void process_header(MutableSlice header_name, MutableSlice header_value);
   Result<bool> parse_multipart_form_data(bool can_be_slow) TD_WARN_UNUSED_RESULT;
   Status parse_url(MutableSlice url) TD_WARN_UNUSED_RESULT;
   Status parse_parameters(MutableSlice parameters) TD_WARN_UNUSED_RESULT;
   Status parse_json_parameters(MutableSlice parameters) TD_WARN_UNUSED_RESULT;
+  Status parse_http_version(Slice version) TD_WARN_UNUSED_RESULT;
   Status parse_head(MutableSlice head) TD_WARN_UNUSED_RESULT;
 
   Status open_temp_file(CSlice desired_file_name) TD_WARN_UNUSED_RESULT;

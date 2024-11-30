@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -7,6 +7,7 @@
 #pragma once
 
 #include "td/telegram/DialogId.h"
+#include "td/telegram/td_api.h"
 #include "td/telegram/telegram_api.h"
 #include "td/telegram/TopDialogCategory.h"
 
@@ -34,7 +35,9 @@ class TopDialogManager final : public Actor {
 
   void remove_dialog(TopDialogCategory category, DialogId dialog_id, Promise<Unit> &&promise);
 
-  void get_top_dialogs(TopDialogCategory category, int32 limit, Promise<vector<DialogId>> promise);
+  void get_top_dialogs(TopDialogCategory category, int32 limit, Promise<td_api::object_ptr<td_api::chats>> &&promise);
+
+  int is_top_dialog(TopDialogCategory category, size_t limit, DialogId dialog_id) const;
 
   void update_rating_e_decay();
 
@@ -49,8 +52,8 @@ class TopDialogManager final : public Actor {
   Td *td_;
   ActorShared<> parent_;
 
-  bool is_active_ = false;
   bool is_enabled_ = true;
+  bool is_synchronized_ = false;
   int32 rating_e_decay_ = 241920;
 
   bool have_toggle_top_peers_query_ = false;
@@ -66,7 +69,7 @@ class TopDialogManager final : public Actor {
   struct GetTopDialogsQuery {
     TopDialogCategory category;
     size_t limit;
-    Promise<vector<DialogId>> promise;
+    Promise<td_api::object_ptr<td_api::chats>> promise;
   };
   vector<GetTopDialogsQuery> pending_get_top_dialogs_;
 
@@ -95,7 +98,7 @@ class TopDialogManager final : public Actor {
   std::array<TopDialogs, static_cast<size_t>(TopDialogCategory::Size)> by_category_;
 
   double rating_add(double now, double rating_timestamp) const;
-  double current_rating_add(double rating_timestamp) const;
+  double current_rating_add(double server_time, double rating_timestamp) const;
   void normalize_rating();
 
   bool set_is_enabled(bool is_enabled);

@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -51,7 +51,7 @@ class FlatHashTable {
   struct Iterator {
     using iterator_category = std::forward_iterator_tag;
     using difference_type = std::ptrdiff_t;
-    using value_type = FlatHashTable::value_type;
+    using value_type = typename NodeT::public_type;
     using pointer = value_type *;
     using reference = value_type &;
 
@@ -108,7 +108,7 @@ class FlatHashTable {
   struct ConstIterator {
     using iterator_category = std::forward_iterator_tag;
     using difference_type = std::ptrdiff_t;
-    using value_type = FlatHashTable::value_type;
+    using value_type = typename NodeT::public_type;
     using pointer = const value_type *;
     using reference = const value_type &;
 
@@ -198,8 +198,8 @@ class FlatHashTable {
   };
 
   FlatHashTable() = default;
-  FlatHashTable(const FlatHashTable &other) = delete;
-  FlatHashTable &operator=(const FlatHashTable &other) = delete;
+  FlatHashTable(const FlatHashTable &) = delete;
+  FlatHashTable &operator=(const FlatHashTable &) = delete;
 
   FlatHashTable(std::initializer_list<NodeT> nodes) {
     if (nodes.size() == 0) {
@@ -224,6 +224,13 @@ class FlatHashTable {
       }
     }
     used_node_count_ = used_nodes;
+  }
+
+  template <class T>
+  FlatHashTable(std::initializer_list<T> keys) {
+    for (auto &key : keys) {
+      emplace(KeyT(key));
+    }
   }
 
   FlatHashTable(FlatHashTable &&other) noexcept
@@ -301,7 +308,7 @@ class FlatHashTable {
 
   template <class... ArgsT>
   std::pair<NodePointer, bool> emplace(KeyT key, ArgsT &&...args) {
-    CHECK(!is_hash_table_key_empty(key));
+    CHECK(!is_hash_table_key_empty<EqT>(key));
     if (unlikely(bucket_count_mask_ == 0)) {
       CHECK(used_node_count_ == 0);
       resize(8);
@@ -378,9 +385,9 @@ class FlatHashTable {
   }
 
   template <class F>
-  void remove_if(F &&f) {
+  bool remove_if(F &&f) {
     if (empty()) {
-      return;
+      return false;
     }
 
     auto it = begin_impl();
@@ -394,9 +401,11 @@ class FlatHashTable {
       } while (!it->empty());
     }
     auto first_empty = it;
+    bool is_removed = false;
     while (it != end) {
       if (!it->empty() && f(it->get_public())) {
         erase_node(it);
+        is_removed = true;
       } else {
         ++it;
       }
@@ -404,11 +413,13 @@ class FlatHashTable {
     for (it = nodes_; it != first_empty;) {
       if (!it->empty() && f(it->get_public())) {
         erase_node(it);
+        is_removed = true;
       } else {
         ++it;
       }
     }
     try_shrink();
+    return is_removed;
   }
 
  private:
@@ -440,7 +451,7 @@ class FlatHashTable {
   }
 
   NodeT *find_impl(const KeyT &key) {
-    if (unlikely(nodes_ == nullptr) || is_hash_table_key_empty(key)) {
+    if (unlikely(nodes_ == nullptr) || is_hash_table_key_empty<EqT>(key)) {
       return nullptr;
     }
     auto bucket = calc_bucket(key);
@@ -465,7 +476,7 @@ class FlatHashTable {
   }
 
   uint32 calc_bucket(const KeyT &key) const {
-    return randomize_hash(HashT()(key)) & bucket_count_mask_;
+    return HashT()(key) & bucket_count_mask_;
   }
 
   inline void next_bucket(uint32 &bucket) const {

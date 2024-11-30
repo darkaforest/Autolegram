@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -14,7 +14,7 @@
 
 namespace td {
 
-template <class KeyT, class Enable = void>
+template <class KeyT, class EqT, class Enable = void>
 struct SetNode {
   using public_key_type = KeyT;
   using public_type = const KeyT;
@@ -30,12 +30,12 @@ struct SetNode {
     return first;
   }
 
-  SetNode(): first() {
+  SetNode() : first() {
   }
   explicit SetNode(KeyT key) : first(std::move(key)) {
   }
-  SetNode(const SetNode &other) = delete;
-  SetNode &operator=(const SetNode &other) = delete;
+  SetNode(const SetNode &) = delete;
+  SetNode &operator=(const SetNode &) = delete;
   SetNode(SetNode &&other) noexcept {
     *this = std::move(other);
   }
@@ -54,7 +54,7 @@ struct SetNode {
   }
 
   bool empty() const {
-    return is_hash_table_key_empty(first);
+    return is_hash_table_key_empty<EqT>(first);
   }
 
   void clear() {
@@ -67,8 +67,8 @@ struct SetNode {
   }
 };
 
-template <class KeyT>
-struct SetNode<KeyT, typename std::enable_if_t<(sizeof(KeyT) > 28 * sizeof(void *))>> {
+template <class KeyT, class EqT>
+struct SetNode<KeyT, EqT, typename std::enable_if_t<(sizeof(KeyT) > 28 * sizeof(void *))>> {
   struct Impl {
     using second_type = KeyT;
 
@@ -76,12 +76,12 @@ struct SetNode<KeyT, typename std::enable_if_t<(sizeof(KeyT) > 28 * sizeof(void 
 
     template <class InputKeyT>
     explicit Impl(InputKeyT &&key) : first(std::forward<InputKeyT>(key)) {
-      DCHECK(!is_hash_table_key_empty(first));
+      DCHECK(!is_hash_table_key_empty<EqT>(first));
     }
-    Impl(const Impl &other) = delete;
-    Impl &operator=(const Impl &other) = delete;
-    Impl(Impl &&other) = delete;
-    void operator=(Impl &&other) = delete;
+    Impl(const Impl &) = delete;
+    Impl &operator=(const Impl &) = delete;
+    Impl(Impl &&) = delete;
+    Impl &operator=(Impl &&) = delete;
   };
 
   using public_key_type = KeyT;
@@ -100,7 +100,7 @@ struct SetNode<KeyT, typename std::enable_if_t<(sizeof(KeyT) > 28 * sizeof(void 
     return impl_->first;
   }
 
-  SetNode(): impl_() {
+  SetNode() : impl_() {
   }
   explicit SetNode(KeyT key) : impl_(td::make_unique<Impl>(std::move(key))) {
   }

@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -38,8 +38,8 @@ namespace detail {
 class ThreadPthread {
  public:
   ThreadPthread() = default;
-  ThreadPthread(const ThreadPthread &other) = delete;
-  ThreadPthread &operator=(const ThreadPthread &other) = delete;
+  ThreadPthread(const ThreadPthread &) = delete;
+  ThreadPthread &operator=(const ThreadPthread &) = delete;
   ThreadPthread(ThreadPthread &&other) noexcept : is_inited_(std::move(other.is_inited_)), thread_(other.thread_) {
   }
   ThreadPthread &operator=(ThreadPthread &&other) noexcept {
@@ -71,6 +71,10 @@ class ThreadPthread {
   static unsigned hardware_concurrency();
 
   using id = pthread_t;
+
+  id get_id() noexcept {
+    return thread_;
+  }
 
   static void send_real_time_signal(id thread_id, int real_time_signal_number);
 

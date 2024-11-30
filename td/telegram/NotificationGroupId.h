@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -7,9 +7,9 @@
 #pragma once
 
 #include "td/utils/common.h"
+#include "td/utils/HashTableUtils.h"
 #include "td/utils/StringBuilder.h"
 
-#include <functional>
 #include <type_traits>
 
 namespace td {
@@ -18,7 +18,7 @@ class NotificationGroupId {
  public:
   NotificationGroupId() = default;
 
-  explicit NotificationGroupId(int32 group_id) : id(group_id) {
+  explicit constexpr NotificationGroupId(int32 group_id) : id(group_id) {
   }
 
   template <class T, typename = std::enable_if_t<std::is_convertible<T, int32>::value>>
@@ -55,8 +55,8 @@ class NotificationGroupId {
 };
 
 struct NotificationGroupIdHash {
-  std::size_t operator()(NotificationGroupId group_id) const {
-    return std::hash<int32>()(group_id.get());
+  uint32 operator()(NotificationGroupId group_id) const {
+    return Hash<int32>()(group_id.get());
   }
 };
 

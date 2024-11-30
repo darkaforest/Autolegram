@@ -1,5 +1,5 @@
 //
-// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2022
+// Copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2024
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -46,6 +46,32 @@ auto transform(V &&v, const Func &f) {
   return detail::transform_helper<std::decay_t<V>>().transform(std::forward<V>(v), f);
 }
 
+template <class T>
+vector<vector<T>> vector_split(vector<T> &&v, std::size_t size) {
+  CHECK(size != 0);
+  vector<vector<T>> result((v.size() + size - 1) / size);
+  if (result.size() <= 1) {
+    if (!result.empty()) {
+      result[0] = std::move(v);
+    }
+    return result;
+  }
+  for (size_t i = 0; i + 1 < result.size(); i++) {
+    auto &slice = result[i];
+    slice.reserve(size);
+    for (size_t j = 0; j < size; j++) {
+      slice.push_back(std::move(v[i * size + j]));
+    }
+  }
+  auto &slice = result.back();
+  auto offset = (result.size() - 1) * size;
+  slice.reserve(v.size() - offset);
+  for (size_t j = offset; j < v.size(); j++) {
+    slice.push_back(std::move(v[j]));
+  }
+  return result;
+}
+
 template <class V, class Func>
 bool remove_if(V &v, const Func &f) {
   size_t i = 0;
@@ -86,6 +112,54 @@ bool remove(V &v, const T &value) {
   return true;
 }
 
+template <class V, class T>
+void add_to_top(V &v, size_t max_size, T value) {
+  size_t size = v.size();
+  size_t i;
+  for (i = 0; i < size; i++) {
+    if (v[i] == value) {
+      value = std::move(v[i]);
+      break;
+    }
+  }
+  if (i == size) {
+    if (size < max_size || i == 0) {
+      v.emplace_back(value);
+    } else {
+      i--;
+    }
+  }
+  while (i > 0) {
+    v[i] = std::move(v[i - 1]);
+    i--;
+  }
+  v[0] = std::move(value);
+}
+
+template <class V, class T, class F>
+void add_to_top_if(V &v, size_t max_size, T value, const F &is_equal_to_value) {
+  size_t size = v.size();
+  size_t i;
+  for (i = 0; i < size; i++) {
+    if (is_equal_to_value(v[i])) {
+      value = std::move(v[i]);
+      break;
+    }
+  }
+  if (i == size) {
+    if (size < max_size || i == 0) {
+      v.emplace_back(value);
+    } else {
+      i--;
+    }
+  }
+  while (i > 0) {
+    v[i] = std::move(v[i - 1]);
+    i--;
+  }
+  v[0] = std::move(value);
+}
+
 template <class V>
 void unique(V &v) {
   if (v.empty()) {
@@ -112,6 +186,16 @@ template <class V, class T>
 bool contains(const V &v, const T &value) {
   for (auto &x : v) {
     if (x == value) {
+      return true;
+    }
+  }
+  return false;
+}
+
+template <class V, class F>
+bool any_of(const V &v, F &&f) {
+  for (const auto &x : v) {
+    if (f(x)) {
       return true;
     }
   }
@@ -196,22 +280,25 @@ detail::reversion_wrapper<T> reversed(T &iterable) {
 }
 
 template <class TableT, class FuncT>
-void table_remove_if(TableT &table, FuncT &&func) {
+bool table_remove_if(TableT &table, FuncT &&func) {
+  bool is_removed = false;
   for (auto it = table.begin(); it != table.end();) {
     if (func(*it)) {
       it = table.erase(it);
+      is_removed = true;
     } else {
       ++it;
     }
   }
+  return is_removed;
 }
 
 template <class NodeT, class HashT, class EqT>
 class FlatHashTable;
 
 template <class NodeT, class HashT, class EqT, class FuncT>
-void table_remove_if(FlatHashTable<NodeT, HashT, EqT> &table, FuncT &&func) {
-  table.remove_if(func);
+bool table_remove_if(FlatHashTable<NodeT, HashT, EqT> &table, FuncT &&func) {
+  return table.remove_if(func);
 }
 
 }  // namespace td
