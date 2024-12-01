@@ -39,15 +39,23 @@ import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
 public final class Autolegram {
-    private static final Lock AUTHORIZATION_LOCK = new ReentrantLock();
 
-    private static final Condition GOT_AUTHORIZATION = AUTHORIZATION_LOCK.newCondition();
+    private static final Lock authorizationLock = new ReentrantLock();
+    private static final Condition gotAuthorization = authorizationLock.newCondition();
 
-    private static final ConcurrentMap<Long, TdApi.User> USERS = new ConcurrentHashMap<>();
+    private static final ConcurrentMap<Long, TdApi.User> users = new ConcurrentHashMap<Long, TdApi.User>();
+    private static final ConcurrentMap<Long, TdApi.BasicGroup> basicGroups = new ConcurrentHashMap<Long, TdApi.BasicGroup>();
+    private static final ConcurrentMap<Long, TdApi.Supergroup> supergroups = new ConcurrentHashMap<Long, TdApi.Supergroup>();
+    private static final ConcurrentMap<Integer, TdApi.SecretChat> secretChats = new ConcurrentHashMap<Integer, TdApi.SecretChat>();
 
-    private static final ConcurrentMap<Long, TdApi.Chat> CHATS = new ConcurrentHashMap<>();
+    private static final ConcurrentMap<Long, TdApi.Chat> chats = new ConcurrentHashMap<Long, TdApi.Chat>();
+    private static final NavigableSet<OrderedChat> mainChatList = new TreeSet<OrderedChat>();
+    private static boolean haveFullMainChatList = false;
 
-    private static final NavigableSet<OrderedChat> MAIN_CHAT_LIST = new TreeSet<>();
+    private static final ConcurrentMap<Long, TdApi.UserFullInfo> usersFullInfo = new ConcurrentHashMap<Long, TdApi.UserFullInfo>();
+    private static final ConcurrentMap<Long, TdApi.BasicGroupFullInfo> basicGroupsFullInfo = new ConcurrentHashMap<Long, TdApi.BasicGroupFullInfo>();
+    private static final ConcurrentMap<Long, TdApi.SupergroupFullInfo> supergroupsFullInfo = new ConcurrentHashMap<Long, TdApi.SupergroupFullInfo>();
+
 
     private static final Logger LOGGER = Logger.getLogger("hidden.logger.name");
 
@@ -61,7 +69,9 @@ public final class Autolegram {
 
     private static final TxTQueue queue = new TxTQueue();
 
-    private static final List<String> fileBotPrefix = List.of("vi_", "v_", "p_", "au_", "d_", "pk_", "VI_", "V_", "P_", "AU_", "D_", "PK_");
+    private static final List<String> fileBotPrefix = List.of("vi_", "pk_", "p_", "d_", "au_", "v_", "p_", "d_", "showfilesbot_", "showfielsbot_", "VI_", "PK_", "P_", "D_", "AU_", "V_", "P_", "D_", "SHOWFILESBOT_", "SHOWFIELSBOT_");
+
+    private static final List<String> fileBotSuffix = List.of("_grp", "_mda", "_GRP", "_MDA");
 
     public static final int FILE_SIZE_B = 1024;
 
@@ -80,8 +90,6 @@ public final class Autolegram {
     public static final int FILE_READ_BUFFER_SIZE = 8 * 1024;
 
     private static Client client = null;
-
-    private static boolean haveFullMainChatList = false;
 
     private static TdApi.AuthorizationState authorizationState = null;
 
@@ -139,11 +147,8 @@ public final class Autolegram {
 
     private static boolean filesDriveLoopStarted = false;
 
-    private static Map<String, Integer> retryMap = new HashMap<>();
-
     private static class OrderedChat implements Comparable<OrderedChat> {
         final long chatId;
-
         final TdApi.ChatPosition position;
 
         OrderedChat(long chatId, TdApi.ChatPosition position) {
@@ -188,21 +193,34 @@ public final class Autolegram {
                     break;
                 case TdApi.UpdateUser.CONSTRUCTOR:
                     TdApi.UpdateUser updateUser = (TdApi.UpdateUser) object;
-                    USERS.put(updateUser.user.id, updateUser.user);
+                    users.put(updateUser.user.id, updateUser.user);
                     break;
                 case TdApi.UpdateUserStatus.CONSTRUCTOR: {
                     TdApi.UpdateUserStatus updateUserStatus = (TdApi.UpdateUserStatus) object;
-                    TdApi.User user = USERS.get(updateUserStatus.userId);
+                    TdApi.User user = users.get(updateUserStatus.userId);
                     synchronized (user) {
                         user.status = updateUserStatus.status;
                     }
                     break;
                 }
+                case TdApi.UpdateBasicGroup.CONSTRUCTOR:
+                    TdApi.UpdateBasicGroup updateBasicGroup = (TdApi.UpdateBasicGroup) object;
+                    basicGroups.put(updateBasicGroup.basicGroup.id, updateBasicGroup.basicGroup);
+                    break;
+                case TdApi.UpdateSupergroup.CONSTRUCTOR:
+                    TdApi.UpdateSupergroup updateSupergroup = (TdApi.UpdateSupergroup) object;
+                    supergroups.put(updateSupergroup.supergroup.id, updateSupergroup.supergroup);
+                    break;
+                case TdApi.UpdateSecretChat.CONSTRUCTOR:
+                    TdApi.UpdateSecretChat updateSecretChat = (TdApi.UpdateSecretChat) object;
+                    secretChats.put(updateSecretChat.secretChat.id, updateSecretChat.secretChat);
+                    break;
+
                 case TdApi.UpdateNewChat.CONSTRUCTOR: {
                     TdApi.UpdateNewChat updateNewChat = (TdApi.UpdateNewChat) object;
                     TdApi.Chat chat = updateNewChat.chat;
                     synchronized (chat) {
-                        CHATS.put(chat.id, chat);
+                        chats.put(chat.id, chat);
 
                         TdApi.ChatPosition[] positions = chat.positions;
                         chat.positions = new TdApi.ChatPosition[0];
@@ -212,7 +230,7 @@ public final class Autolegram {
                 }
                 case TdApi.UpdateChatTitle.CONSTRUCTOR: {
                     TdApi.UpdateChatTitle updateChat = (TdApi.UpdateChatTitle) object;
-                    TdApi.Chat chat = CHATS.get(updateChat.chatId);
+                    TdApi.Chat chat = chats.get(updateChat.chatId);
                     synchronized (chat) {
                         chat.title = updateChat.title;
                     }
@@ -220,15 +238,23 @@ public final class Autolegram {
                 }
                 case TdApi.UpdateChatPhoto.CONSTRUCTOR: {
                     TdApi.UpdateChatPhoto updateChat = (TdApi.UpdateChatPhoto) object;
-                    TdApi.Chat chat = CHATS.get(updateChat.chatId);
+                    TdApi.Chat chat = chats.get(updateChat.chatId);
                     synchronized (chat) {
                         chat.photo = updateChat.photo;
                     }
                     break;
                 }
+                case TdApi.UpdateChatPermissions.CONSTRUCTOR: {
+                    TdApi.UpdateChatPermissions update = (TdApi.UpdateChatPermissions) object;
+                    TdApi.Chat chat = chats.get(update.chatId);
+                    synchronized (chat) {
+                        chat.permissions = update.permissions;
+                    }
+                    break;
+                }
                 case TdApi.UpdateChatLastMessage.CONSTRUCTOR: {
                     TdApi.UpdateChatLastMessage updateChat = (TdApi.UpdateChatLastMessage) object;
-                    TdApi.Chat chat = CHATS.get(updateChat.chatId);
+                    TdApi.Chat chat = chats.get(updateChat.chatId);
                     synchronized (chat) {
                         chat.lastMessage = updateChat.lastMessage;
                         setChatPositions(chat, updateChat.positions);
@@ -240,7 +266,8 @@ public final class Autolegram {
                     if (updateChat.position.list.getConstructor() != TdApi.ChatListMain.CONSTRUCTOR) {
                         break;
                     }
-                    TdApi.Chat chat = CHATS.get(updateChat.chatId);
+
+                    TdApi.Chat chat = chats.get(updateChat.chatId);
                     synchronized (chat) {
                         int i;
                         for (i = 0; i < chat.positions.length; i++) {
@@ -248,8 +275,7 @@ public final class Autolegram {
                                 break;
                             }
                         }
-                        TdApi.ChatPosition[] new_positions = new TdApi.ChatPosition[chat.positions.length
-                                + (updateChat.position.order == 0 ? 0 : 1) - (i < chat.positions.length ? 1 : 0)];
+                        TdApi.ChatPosition[] new_positions = new TdApi.ChatPosition[chat.positions.length + (updateChat.position.order == 0 ? 0 : 1) - (i < chat.positions.length ? 1 : 0)];
                         int pos = 0;
                         if (updateChat.position.order != 0) {
                             new_positions[pos++] = updateChat.position;
@@ -259,13 +285,15 @@ public final class Autolegram {
                                 new_positions[pos++] = chat.positions[j];
                             }
                         }
+                        assert pos == new_positions.length;
+
                         setChatPositions(chat, new_positions);
                     }
                     break;
                 }
                 case TdApi.UpdateChatReadInbox.CONSTRUCTOR: {
                     TdApi.UpdateChatReadInbox updateChat = (TdApi.UpdateChatReadInbox) object;
-                    TdApi.Chat chat = CHATS.get(updateChat.chatId);
+                    TdApi.Chat chat = chats.get(updateChat.chatId);
                     synchronized (chat) {
                         chat.lastReadInboxMessageId = updateChat.lastReadInboxMessageId;
                         chat.unreadCount = updateChat.unreadCount;
@@ -274,93 +302,195 @@ public final class Autolegram {
                 }
                 case TdApi.UpdateChatReadOutbox.CONSTRUCTOR: {
                     TdApi.UpdateChatReadOutbox updateChat = (TdApi.UpdateChatReadOutbox) object;
-                    TdApi.Chat chat = CHATS.get(updateChat.chatId);
+                    TdApi.Chat chat = chats.get(updateChat.chatId);
                     synchronized (chat) {
                         chat.lastReadOutboxMessageId = updateChat.lastReadOutboxMessageId;
                     }
                     break;
                 }
-                case TdApi.UpdateChatUnreadMentionCount.CONSTRUCTOR: {
-                    TdApi.UpdateChatUnreadMentionCount updateChat = (TdApi.UpdateChatUnreadMentionCount) object;
-                    TdApi.Chat chat = CHATS.get(updateChat.chatId);
+                case TdApi.UpdateChatActionBar.CONSTRUCTOR: {
+                    TdApi.UpdateChatActionBar updateChat = (TdApi.UpdateChatActionBar) object;
+                    TdApi.Chat chat = chats.get(updateChat.chatId);
                     synchronized (chat) {
-                        chat.unreadMentionCount = updateChat.unreadMentionCount;
+                        chat.actionBar = updateChat.actionBar;
                     }
                     break;
                 }
-                case TdApi.UpdateMessageMentionRead.CONSTRUCTOR: {
-                    TdApi.UpdateMessageMentionRead updateChat = (TdApi.UpdateMessageMentionRead) object;
-                    TdApi.Chat chat = CHATS.get(updateChat.chatId);
+                case TdApi.UpdateChatAvailableReactions.CONSTRUCTOR: {
+                    TdApi.UpdateChatAvailableReactions updateChat = (TdApi.UpdateChatAvailableReactions) object;
+                    TdApi.Chat chat = chats.get(updateChat.chatId);
                     synchronized (chat) {
-                        chat.unreadMentionCount = updateChat.unreadMentionCount;
-                    }
-                    break;
-                }
-                case TdApi.UpdateChatReplyMarkup.CONSTRUCTOR: {
-                    TdApi.UpdateChatReplyMarkup updateChat = (TdApi.UpdateChatReplyMarkup) object;
-                    TdApi.Chat chat = CHATS.get(updateChat.chatId);
-                    synchronized (chat) {
-                        chat.replyMarkupMessageId = updateChat.replyMarkupMessageId;
+                        chat.availableReactions = updateChat.availableReactions;
                     }
                     break;
                 }
                 case TdApi.UpdateChatDraftMessage.CONSTRUCTOR: {
                     TdApi.UpdateChatDraftMessage updateChat = (TdApi.UpdateChatDraftMessage) object;
-                    TdApi.Chat chat = CHATS.get(updateChat.chatId);
+                    TdApi.Chat chat = chats.get(updateChat.chatId);
                     synchronized (chat) {
                         chat.draftMessage = updateChat.draftMessage;
                         setChatPositions(chat, updateChat.positions);
                     }
                     break;
                 }
-                case TdApi.UpdateChatPermissions.CONSTRUCTOR: {
-                    TdApi.UpdateChatPermissions update = (TdApi.UpdateChatPermissions) object;
-                    TdApi.Chat chat = CHATS.get(update.chatId);
+                case TdApi.UpdateChatMessageSender.CONSTRUCTOR: {
+                    TdApi.UpdateChatMessageSender updateChat = (TdApi.UpdateChatMessageSender) object;
+                    TdApi.Chat chat = chats.get(updateChat.chatId);
                     synchronized (chat) {
-                        chat.permissions = update.permissions;
+                        chat.messageSenderId = updateChat.messageSenderId;
+                    }
+                    break;
+                }
+                case TdApi.UpdateChatMessageAutoDeleteTime.CONSTRUCTOR: {
+                    TdApi.UpdateChatMessageAutoDeleteTime updateChat = (TdApi.UpdateChatMessageAutoDeleteTime) object;
+                    TdApi.Chat chat = chats.get(updateChat.chatId);
+                    synchronized (chat) {
+                        chat.messageAutoDeleteTime = updateChat.messageAutoDeleteTime;
                     }
                     break;
                 }
                 case TdApi.UpdateChatNotificationSettings.CONSTRUCTOR: {
                     TdApi.UpdateChatNotificationSettings update = (TdApi.UpdateChatNotificationSettings) object;
-                    TdApi.Chat chat = CHATS.get(update.chatId);
+                    TdApi.Chat chat = chats.get(update.chatId);
                     synchronized (chat) {
                         chat.notificationSettings = update.notificationSettings;
                     }
                     break;
                 }
+                case TdApi.UpdateChatPendingJoinRequests.CONSTRUCTOR: {
+                    TdApi.UpdateChatPendingJoinRequests update = (TdApi.UpdateChatPendingJoinRequests) object;
+                    TdApi.Chat chat = chats.get(update.chatId);
+                    synchronized (chat) {
+                        chat.pendingJoinRequests = update.pendingJoinRequests;
+                    }
+                    break;
+                }
+                case TdApi.UpdateChatReplyMarkup.CONSTRUCTOR: {
+                    TdApi.UpdateChatReplyMarkup updateChat = (TdApi.UpdateChatReplyMarkup) object;
+                    TdApi.Chat chat = chats.get(updateChat.chatId);
+                    synchronized (chat) {
+                        chat.replyMarkupMessageId = updateChat.replyMarkupMessageId;
+                    }
+                    break;
+                }
+                case TdApi.UpdateChatBackground.CONSTRUCTOR: {
+                    TdApi.UpdateChatBackground updateChat = (TdApi.UpdateChatBackground) object;
+                    TdApi.Chat chat = chats.get(updateChat.chatId);
+                    synchronized (chat) {
+                        chat.background = updateChat.background;
+                    }
+                    break;
+                }
+                case TdApi.UpdateChatTheme.CONSTRUCTOR: {
+                    TdApi.UpdateChatTheme updateChat = (TdApi.UpdateChatTheme) object;
+                    TdApi.Chat chat = chats.get(updateChat.chatId);
+                    synchronized (chat) {
+                        chat.themeName = updateChat.themeName;
+                    }
+                    break;
+                }
+                case TdApi.UpdateChatUnreadMentionCount.CONSTRUCTOR: {
+                    TdApi.UpdateChatUnreadMentionCount updateChat = (TdApi.UpdateChatUnreadMentionCount) object;
+                    TdApi.Chat chat = chats.get(updateChat.chatId);
+                    synchronized (chat) {
+                        chat.unreadMentionCount = updateChat.unreadMentionCount;
+                    }
+                    break;
+                }
+                case TdApi.UpdateChatUnreadReactionCount.CONSTRUCTOR: {
+                    TdApi.UpdateChatUnreadReactionCount updateChat = (TdApi.UpdateChatUnreadReactionCount) object;
+                    TdApi.Chat chat = chats.get(updateChat.chatId);
+                    synchronized (chat) {
+                        chat.unreadReactionCount = updateChat.unreadReactionCount;
+                    }
+                    break;
+                }
+                case TdApi.UpdateChatVideoChat.CONSTRUCTOR: {
+                    TdApi.UpdateChatVideoChat updateChat = (TdApi.UpdateChatVideoChat) object;
+                    TdApi.Chat chat = chats.get(updateChat.chatId);
+                    synchronized (chat) {
+                        chat.videoChat = updateChat.videoChat;
+                    }
+                    break;
+                }
                 case TdApi.UpdateChatDefaultDisableNotification.CONSTRUCTOR: {
                     TdApi.UpdateChatDefaultDisableNotification update = (TdApi.UpdateChatDefaultDisableNotification) object;
-                    TdApi.Chat chat = CHATS.get(update.chatId);
+                    TdApi.Chat chat = chats.get(update.chatId);
                     synchronized (chat) {
                         chat.defaultDisableNotification = update.defaultDisableNotification;
                     }
                     break;
                 }
+                case TdApi.UpdateChatHasProtectedContent.CONSTRUCTOR: {
+                    TdApi.UpdateChatHasProtectedContent updateChat = (TdApi.UpdateChatHasProtectedContent) object;
+                    TdApi.Chat chat = chats.get(updateChat.chatId);
+                    synchronized (chat) {
+                        chat.hasProtectedContent = updateChat.hasProtectedContent;
+                    }
+                    break;
+                }
+                case TdApi.UpdateChatIsTranslatable.CONSTRUCTOR: {
+                    TdApi.UpdateChatIsTranslatable update = (TdApi.UpdateChatIsTranslatable) object;
+                    TdApi.Chat chat = chats.get(update.chatId);
+                    synchronized (chat) {
+                        chat.isTranslatable = update.isTranslatable;
+                    }
+                    break;
+                }
                 case TdApi.UpdateChatIsMarkedAsUnread.CONSTRUCTOR: {
                     TdApi.UpdateChatIsMarkedAsUnread update = (TdApi.UpdateChatIsMarkedAsUnread) object;
-                    TdApi.Chat chat = CHATS.get(update.chatId);
+                    TdApi.Chat chat = chats.get(update.chatId);
                     synchronized (chat) {
                         chat.isMarkedAsUnread = update.isMarkedAsUnread;
                     }
                     break;
                 }
-                case TdApi.UpdateChatIsBlocked.CONSTRUCTOR: {
-                    TdApi.UpdateChatIsBlocked update = (TdApi.UpdateChatIsBlocked) object;
-                    TdApi.Chat chat = CHATS.get(update.chatId);
+                case TdApi.UpdateChatBlockList.CONSTRUCTOR: {
+                    TdApi.UpdateChatBlockList update = (TdApi.UpdateChatBlockList) object;
+                    TdApi.Chat chat = chats.get(update.chatId);
                     synchronized (chat) {
-                        chat.isBlocked = update.isBlocked;
+                        chat.blockList = update.blockList;
                     }
                     break;
                 }
                 case TdApi.UpdateChatHasScheduledMessages.CONSTRUCTOR: {
                     TdApi.UpdateChatHasScheduledMessages update = (TdApi.UpdateChatHasScheduledMessages) object;
-                    TdApi.Chat chat = CHATS.get(update.chatId);
+                    TdApi.Chat chat = chats.get(update.chatId);
                     synchronized (chat) {
                         chat.hasScheduledMessages = update.hasScheduledMessages;
                     }
                     break;
                 }
+
+                case TdApi.UpdateMessageMentionRead.CONSTRUCTOR: {
+                    TdApi.UpdateMessageMentionRead updateChat = (TdApi.UpdateMessageMentionRead) object;
+                    TdApi.Chat chat = chats.get(updateChat.chatId);
+                    synchronized (chat) {
+                        chat.unreadMentionCount = updateChat.unreadMentionCount;
+                    }
+                    break;
+                }
+                case TdApi.UpdateMessageUnreadReactions.CONSTRUCTOR: {
+                    TdApi.UpdateMessageUnreadReactions updateChat = (TdApi.UpdateMessageUnreadReactions) object;
+                    TdApi.Chat chat = chats.get(updateChat.chatId);
+                    synchronized (chat) {
+                        chat.unreadReactionCount = updateChat.unreadReactionCount;
+                    }
+                    break;
+                }
+
+                case TdApi.UpdateUserFullInfo.CONSTRUCTOR:
+                    TdApi.UpdateUserFullInfo updateUserFullInfo = (TdApi.UpdateUserFullInfo) object;
+                    usersFullInfo.put(updateUserFullInfo.userId, updateUserFullInfo.userFullInfo);
+                    break;
+                case TdApi.UpdateBasicGroupFullInfo.CONSTRUCTOR:
+                    TdApi.UpdateBasicGroupFullInfo updateBasicGroupFullInfo = (TdApi.UpdateBasicGroupFullInfo) object;
+                    basicGroupsFullInfo.put(updateBasicGroupFullInfo.basicGroupId, updateBasicGroupFullInfo.basicGroupFullInfo);
+                    break;
+                case TdApi.UpdateSupergroupFullInfo.CONSTRUCTOR:
+                    TdApi.UpdateSupergroupFullInfo updateSupergroupFullInfo = (TdApi.UpdateSupergroupFullInfo) object;
+                    supergroupsFullInfo.put(updateSupergroupFullInfo.supergroupId, updateSupergroupFullInfo.supergroupFullInfo);
+                    break;
                 default:
                     break;
             }
@@ -409,7 +539,6 @@ public final class Autolegram {
             return;
         }
         for (String token : tokens) {
-            LOGGER.info("[filebot] [add] offer to queue: " + token + " ,current size: " + queue.size());
             if (UNIQUE_FILE_BOT_TOKEN_SET.contains(token)) {
                 LOGGER.info("[filebot] [add] token duplicated, skip");
                 continue;
@@ -417,6 +546,7 @@ public final class Autolegram {
             UNIQUE_FILE_BOT_TOKEN_SET.add(token);
             appendUniqueFileTokenId(token);
             queue.offer(token);
+            LOGGER.info("[filebot] [add] offer to queue: " + token + " ,current size: " + queue.size());
         }
     }
 
@@ -425,8 +555,8 @@ public final class Autolegram {
             return;
         }
         LOGGER.info("[message] [sending] [" + chatId + "] " + msg);
-        TdApi.InputMessageContent content = new TdApi.InputMessageText(new TdApi.FormattedText(msg, null), false, true);
-        client.send(new TdApi.SendMessage(chatId, 0, 0, null, null, content), object -> {
+        TdApi.InputMessageContent content = new TdApi.InputMessageText(new TdApi.FormattedText(msg, null), null, true);
+        client.send(new TdApi.SendMessage(chatId, 0, null, null, null, content), object -> {
             if (object instanceof TdApi.Error) {
                 LOGGER.info("[message] [sending] failed, chatId=" + chatId + ", msg=" + msg);
             } else {
@@ -451,40 +581,34 @@ public final class Autolegram {
                 if (button.text == null) {
                     return;
                 }
-                if (!button.text.trim().equalsIgnoreCase("load more") && !button.text.trim().equalsIgnoreCase("加载更多")) {
+                if (!button.text.trim().contains("load") && !button.text.trim().contains("加载")) {
                     return;
                 }
                 TdApi.InlineKeyboardButtonTypeCallback buttonType = (TdApi.InlineKeyboardButtonTypeCallback) button.type;
                 client.send(new TdApi.GetCallbackQueryAnswer(chat.id, message.id, new TdApi.CallbackQueryPayloadData(buttonType.data)), object -> {
                 });
                 LOGGER.info("[message][file bot] load more message sent");
+                try {
+                    Thread.sleep(15000);
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
                 return;
             }
             if (lastMessage.content instanceof TdApi.MessageText) {
-                String reply = ((TdApi.MessageText) lastMessage.content).text.text;
-                if (!reply.equals("/help") && !reply.equals(queue.peek())) {
-                    LOGGER.info("[message][file bot] received but not equal, ignored");
-                    return;
-                }
                 if (message.content instanceof TdApi.MessageText) {
                     String text = ((TdApi.MessageText) message.content).text.text;
-                    if (text.contains("password") || text.contains("密码")) {
-                        LOGGER.info("[message][file bot] received but need password, ignored");
-                        queue.poll();
-                        sendMessage(telegramChatFilesDriveId, "i don't have any password");
-                        filebotKickStart();
-                        return;
+                    if (text.contains("稍候") || text.contains("未找到")) {
+                        LOGGER.info("[message][file bot] need try later");
                     }
                 }
-                if (reply.startsWith("pk_")) {
-                    LOGGER.info("[message][file bot] received pk reply, ignored");
-                    return;
-                }
-                LOGGER.info("[message][file bot] received single file");
-                queue.poll();
-                filebotKickStart();
             }
+            LOGGER.info("[message][file bot] received a reply");
         }
+    }
+
+    private static String getUserNameSafe(TdApi.Usernames usernames) {
+        return usernames == null ? "" : usernames.editableUsername;
     }
 
     private static void onNewMessageUpdated(TdApi.UpdateNewMessage updateNewMessage) {
@@ -498,21 +622,21 @@ public final class Autolegram {
         boolean isAnonymous = false;
         if (messageSender instanceof TdApi.MessageSenderUser) {
             TdApi.MessageSenderUser messageSenderUser = (TdApi.MessageSenderUser) messageSender;
-            TdApi.User senderUser = USERS.get(messageSenderUser.userId);
+            TdApi.User senderUser = users.get(messageSenderUser.userId);
             firstName = senderUser.firstName;
             lastName = senderUser.lastName;
-            userName = senderUser.username;
+            userName = getUserNameSafe(senderUser.usernames);
             phoneNumber = senderUser.phoneNumber;
             senderId = senderUser.id;
         }
         if (messageSender instanceof TdApi.MessageSenderChat) {
             TdApi.MessageSenderChat messageSenderChat = (TdApi.MessageSenderChat) messageSender;
-            TdApi.Chat chat = CHATS.get(messageSenderChat.chatId);
+            TdApi.Chat chat = chats.get(messageSenderChat.chatId);
             userName = chat.title;
             isAnonymous = true;
             senderId = messageSenderChat.chatId;
         }
-        TdApi.Chat chat = CHATS.get(message.chatId);
+        TdApi.Chat chat = chats.get(message.chatId);
         int time = message.date;
         SimpleDateFormat sdf = new SimpleDateFormat("MM-dd-yyyy HH:mm:ss");
         String sd = sdf.format(new Date(time * 1000L));
@@ -604,7 +728,7 @@ public final class Autolegram {
             TdApi.MessageSticker messageSticker = (TdApi.MessageSticker) messageContent;
             boolean isPremium = messageSticker.isPremium;
             long setId = messageSticker.sticker.setId;
-            long customEmojiId = messageSticker.sticker.customEmojiId;
+            long customEmojiId = messageSticker.sticker.id;
             String emoji = messageSticker.sticker.emoji;
             LOGGER.info("[message] [sticker]" + (isPremium ? "[premium]" : "") + " emoji=" + emoji
                     + ", setId=" + setId + ", customEmojiId=" + customEmojiId);
@@ -612,7 +736,7 @@ public final class Autolegram {
             TdApi.MessageAnimatedEmoji messageAnimatedEmoji = (TdApi.MessageAnimatedEmoji) messageContent;
             String emoji = messageAnimatedEmoji.emoji;
             long setId = messageAnimatedEmoji.animatedEmoji.sticker.setId;
-            long customEmojiId = messageAnimatedEmoji.animatedEmoji.sticker.customEmojiId;
+            long customEmojiId = messageAnimatedEmoji.animatedEmoji.sticker.id;
             LOGGER.info("[message] [sticker] emoji=" + emoji + ", setId=" + setId + ", customEmojiId=" + customEmojiId);
         } else if (messageContent instanceof TdApi.MessageChatJoinByLink) {
             LOGGER.info("[operation] user joined the group by link, group=" + chat.title + ", userid=" + userName + ", username=" + firstName + " " + lastName + ", userPhone=" + phoneNumber);
@@ -623,21 +747,21 @@ public final class Autolegram {
             long[] userIds = addMembers.memberUserIds;
             if (userIds != null && userIds.length != 0) {
                 for (long userid : userIds) {
-                    TdApi.User joinUser = USERS.get(userid);
+                    TdApi.User joinUser = users.get(userid);
                     if (joinUser == null) {
                         LOGGER.info("[operation] user has been added to the group, group=" + chat.title + ", userid=" + userid);
                     } else {
-                        LOGGER.info("[operation] user has been added to the group, group=" + chat.title + ", userid=" + joinUser.username + ", username=" + joinUser.firstName + " " + joinUser.lastName + ", userPhone=" + joinUser.phoneNumber);
+                        LOGGER.info("[operation] user has been added to the group, group=" + chat.title + ", userid=" + getUserNameSafe(joinUser.usernames) + ", username=" + joinUser.firstName + " " + joinUser.lastName + ", userPhone=" + joinUser.phoneNumber);
                     }
                 }
             }
         } else if (messageContent instanceof TdApi.MessageChatDeleteMember) {
             TdApi.MessageChatDeleteMember deleteMember = (TdApi.MessageChatDeleteMember) messageContent;
-            TdApi.User deleteUser = USERS.get(deleteMember.userId);
+            TdApi.User deleteUser = users.get(deleteMember.userId);
             if (deleteUser == null) {
                 LOGGER.info("[operation] user has been removed from the group, group=" + chat.title + ", userid=" + deleteMember.userId);
             } else {
-                LOGGER.info("[operation] user has been removed from the group, group=" + chat.title + ", userid=" + deleteUser.username + ", username=" + deleteUser.firstName + " " + deleteUser.lastName + ", userPhone=" + deleteUser.phoneNumber);
+                LOGGER.info("[operation] user has been removed from the group, group=" + chat.title + ", userid=" + getUserNameSafe(deleteUser.usernames) + ", username=" + deleteUser.firstName + " " + deleteUser.lastName + ", userPhone=" + deleteUser.phoneNumber);
             }
         } else if (messageContent instanceof TdApi.MessageChatChangePhoto) {
             TdApi.MessageChatChangePhoto changePhoto = (TdApi.MessageChatChangePhoto) messageContent;
@@ -657,7 +781,7 @@ public final class Autolegram {
             TdApi.Poll poll = pollMessage.poll;
             LOGGER.info("[operation] poll update, question=" + poll.question
                     + ((poll.options != null && poll.options.length != 0)
-                    ? ", options=[" + Arrays.stream(poll.options).map(o -> o.text).collect(Collectors.joining(", ")) + "]"
+                    ? ", options=[" + Arrays.stream(poll.options).map(o -> o.text.text).collect(Collectors.joining(", ")) + "]"
                     : ""));
         } else {
             LOGGER.info("[message] [unsupported] " + messageContent.getClass().getSimpleName());
@@ -667,10 +791,14 @@ public final class Autolegram {
 
     private static void filebotKickStart() {
         if (queue.isEmpty()) {
-            LOGGER.info("[message] [file bot] queue is empty");
             return;
         }
-        String token = queue.peek();
+        try {
+            Thread.sleep(10000);
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
+        String token = queue.poll();
         LOGGER.info("[message] [file bot] start to deal with " + token);
         sendMessage(telegramChatFilesDriveId, token);
     }
@@ -686,7 +814,6 @@ public final class Autolegram {
                 request.databaseDirectory = "tdlib";
                 request.useMessageDatabase = true;
                 request.useSecretChats = true;
-                request.enableStorageOptimizer = true;
                 request.apiId = telegramClientApiId;
                 request.apiHash = telegramClientApiHash;
                 request.systemLanguageCode = telegramClientLanguage;
@@ -770,11 +897,11 @@ public final class Autolegram {
             case TdApi.AuthorizationStateReady.CONSTRUCTOR:
                 LOGGER.info("[login] telegram account login successfully");
                 haveAuthorization = true;
-                AUTHORIZATION_LOCK.lock();
+                authorizationLock.lock();
                 try {
-                    GOT_AUTHORIZATION.signal();
+                    gotAuthorization.signal();
                 } finally {
-                    AUTHORIZATION_LOCK.unlock();
+                    authorizationLock.unlock();
                 }
                 break;
             case TdApi.AuthorizationStateLoggingOut.CONSTRUCTOR:
@@ -809,11 +936,9 @@ public final class Autolegram {
                 LOGGER.info("[download] [async] download activated, localId=" + file.id);
                 LOCAL_FILE_ACTIVE_MAP.put(file.id, true);
             }
-            if (LOCAL_FILE_ACTIVE_MAP.getOrDefault(file.id, false)
-                    && !file.local.isDownloadingActive
-                    && !file.local.isDownloadingCompleted) {
-                LOGGER.info("[download] [async] download deactivated, localId=" + file.id);
-                LOCAL_FILE_ACTIVE_MAP.remove(file.id);
+            if (LOCAL_FILE_ACTIVE_MAP.getOrDefault(file.id, false)) {
+                LOGGER.info("[download] [async] download ignored, localId=" + file.id);
+                return;
             }
             if (file.local.isDownloadingCompleted) {
                 LOGGER.info("[download] [async] download competed, localId=" + file.id);
@@ -964,18 +1089,20 @@ public final class Autolegram {
     }
 
     private static void setChatPositions(TdApi.Chat chat, TdApi.ChatPosition[] positions) {
-        synchronized (MAIN_CHAT_LIST) {
+        synchronized (mainChatList) {
             synchronized (chat) {
                 for (TdApi.ChatPosition position : chat.positions) {
                     if (position.list.getConstructor() == TdApi.ChatListMain.CONSTRUCTOR) {
-                        boolean isRemoved = MAIN_CHAT_LIST.remove(new OrderedChat(chat.id, position));
+                        boolean isRemoved = mainChatList.remove(new OrderedChat(chat.id, position));
                         assert isRemoved;
                     }
                 }
+
                 chat.positions = positions;
+
                 for (TdApi.ChatPosition position : chat.positions) {
                     if (position.list.getConstructor() == TdApi.ChatListMain.CONSTRUCTOR) {
-                        boolean isAdded = MAIN_CHAT_LIST.add(new OrderedChat(chat.id, position));
+                        boolean isAdded = mainChatList.add(new OrderedChat(chat.id, position));
                         assert isAdded;
                     }
                 }
@@ -984,14 +1111,14 @@ public final class Autolegram {
     }
 
     public static void getMainChatList() {
-        synchronized (MAIN_CHAT_LIST) {
-            if (!haveFullMainChatList && telegramMaxChatSize > MAIN_CHAT_LIST.size()) {
+        synchronized (mainChatList) {
+            if (!haveFullMainChatList && telegramMaxChatSize > mainChatList.size()) {
                 // send LoadChats request if there are some unknown chats and have not enough known chats
-                client.send(new TdApi.LoadChats(new TdApi.ChatListMain(), telegramMaxChatSize - MAIN_CHAT_LIST.size()), object -> {
+                client.send(new TdApi.LoadChats(new TdApi.ChatListMain(), telegramMaxChatSize - mainChatList.size()), object -> {
                     switch (object.getConstructor()) {
                         case TdApi.Error.CONSTRUCTOR:
                             if (((TdApi.Error) object).code == 404) {
-                                synchronized (MAIN_CHAT_LIST) {
+                                synchronized (mainChatList) {
                                     haveFullMainChatList = true;
                                     getMainChatList();
                                 }
@@ -1009,11 +1136,11 @@ public final class Autolegram {
                 });
                 return;
             }
-            java.util.Iterator<OrderedChat> iter = MAIN_CHAT_LIST.iterator();
-            LOGGER.info("[chat] first " + telegramMaxChatSize + " chat(s) out of " + MAIN_CHAT_LIST.size() + " known chat(s):");
-            for (int i = 0; i < telegramMaxChatSize && i < MAIN_CHAT_LIST.size(); i++) {
+            java.util.Iterator<OrderedChat> iter = mainChatList.iterator();
+            LOGGER.info("[chat] first " + telegramMaxChatSize + " chat(s) out of " + mainChatList.size() + " known chat(s):");
+            for (int i = 0; i < telegramMaxChatSize && i < mainChatList.size(); i++) {
                 long chatId = iter.next().chatId;
-                TdApi.Chat chat = CHATS.get(chatId);
+                TdApi.Chat chat = chats.get(chatId);
                 synchronized (chat) {
                     LOGGER.info("[chat] chatId=" + chatId + ", chatName=" + chat.title + ", unReadCount=" + chat.unreadCount);
                 }
@@ -1201,6 +1328,12 @@ public final class Autolegram {
                     break;
                 }
             }
+            for (String suffix : fileBotSuffix) {
+                if (segment.endsWith(suffix)) {
+                    list.add(segment.trim());
+                    break;
+                }
+            }
         }
         return list;
     }
@@ -1299,13 +1432,13 @@ public final class Autolegram {
         }).start();
         // await authorization
         LOGGER.info("[init] wait user login");
-        AUTHORIZATION_LOCK.lock();
+        authorizationLock.lock();
         try {
             while (!haveAuthorization) {
-                GOT_AUTHORIZATION.await();
+                gotAuthorization.await();
             }
         } finally {
-            AUTHORIZATION_LOCK.unlock();
+            authorizationLock.unlock();
         }
         if (haveAuthorization) {
             getMainChatList();
@@ -1325,10 +1458,11 @@ public final class Autolegram {
         // set log message handler to handle only fatal errors (0) and plain log messages (-1)
         Client.setLogMessageHandler(0, new LogMessageHandler());
         // disable TDLib log and redirect fatal errors and plain log messages to a file
-        Client.execute(new TdApi.SetLogVerbosityLevel(0));
-        if (Client.execute(new TdApi.SetLogStream(new TdApi.LogStreamFile(
-                "tdlib.log", 1 << 27, false))) instanceof TdApi.Error) {
-            throw new IOError(new IOException("[init] Write access to the current directory is required"));
+        try {
+            Client.execute(new TdApi.SetLogVerbosityLevel(0));
+            Client.execute(new TdApi.SetLogStream(new TdApi.LogStreamFile("tdlib.log", 1 << 27, false)));
+        } catch (Client.ExecutionException error) {
+            throw new IOError(new IOException("Write access to the current directory is required"));
         }
         LOGGER.info("[init] setting tdlib finish");
     }
@@ -1457,30 +1591,9 @@ public final class Autolegram {
                     throw new RuntimeException(e);
                 }
                 filesDriveLoopStarted = true;
-                filebotKickStart();
                 lastFilesDriveUpdatedTime = System.currentTimeMillis();
                 while (true) {
-                    try {
-                        Thread.sleep(1000);
-                    } catch (InterruptedException e) {
-                        throw new RuntimeException(e);
-                    }
-                    if (System.currentTimeMillis() - lastFilesDriveUpdatedTime > 1000 * 60 * 2 + (int) (1000 * 60 * Math.random())) {
-                        if (!queue.isEmpty()) {
-                            String token = queue.peek();
-                            if (retryMap.getOrDefault(token, 0) > 10) {
-                                LOGGER.info("[file bot] evict failed token after retries: " + token);
-                                queue.poll();
-                                retryMap.remove(token);
-                                continue;
-                            }
-                            if (token.startsWith("pk_")) {
-                                retryMap.put(token, Integer.MAX_VALUE);
-                            } else {
-                                retryMap.put(token, retryMap.getOrDefault(token, 0) + 1);
-                                queue.offer(queue.poll());
-                            }
-                        }
+                    if (System.currentTimeMillis() - lastFilesDriveUpdatedTime > 1000 * 15 + (int) (1000 * 10 * Math.random())) {
                         filebotKickStart();
                         lastFilesDriveUpdatedTime = System.currentTimeMillis();
                     }
