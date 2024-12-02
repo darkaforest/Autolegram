@@ -63,7 +63,7 @@ public final class Autolegram {
 
     private static final Set<String> UNIQUE_FILE_BOT_TOKEN_SET = new HashSet<>();
 
-    private static final Map<Integer, Boolean> LOCAL_FILE_ACTIVE_MAP = new HashMap<>();
+    private static final Set<Integer> LOCAL_FILE_ACTIVE_SET = new HashSet<>();
 
     private static final String CONFIG_FILE_PATH = "./conf/config.properties";
 
@@ -923,27 +923,21 @@ public final class Autolegram {
     }
 
     private static void onFileUpdated(TdApi.UpdateFile updateFile) {
+
         TdApi.File file = updateFile.file;
         double fileSize = updateFile.file.size;
         double currSize = updateFile.file.local.downloadedSize;
+        if (!LOCAL_FILE_ACTIVE_SET.contains(file.id)) {
+            return;
+        }
+        if (file.local.isDownloadingCompleted) {
+            LOGGER.info("[download] [async] download competed, localId=" + file.id);
+            LOCAL_FILE_ACTIVE_SET.remove(file.id);
+        }
         if (telegramDataShowDetail) {
             String progress = new DecimalFormat("0.00%").format(currSize / fileSize);
             LOGGER.info("[download] [async] file status update, localId=" + file.id + ", progress=" + progress
                     + ", activated=" + file.local.isDownloadingActive + ", completed=" + file.local.isDownloadingCompleted);
-        } else {
-            if (!LOCAL_FILE_ACTIVE_MAP.getOrDefault(file.id, false)
-                    && file.local.isDownloadingActive) {
-                LOGGER.info("[download] [async] download activated, localId=" + file.id);
-                LOCAL_FILE_ACTIVE_MAP.put(file.id, true);
-            }
-            if (LOCAL_FILE_ACTIVE_MAP.getOrDefault(file.id, false)) {
-                LOGGER.info("[download] [async] download ignored, localId=" + file.id);
-                return;
-            }
-            if (file.local.isDownloadingCompleted) {
-                LOGGER.info("[download] [async] download competed, localId=" + file.id);
-                LOCAL_FILE_ACTIVE_MAP.remove(file.id);
-            }
         }
         if (currSize != fileSize) {
             return;
@@ -1393,7 +1387,8 @@ public final class Autolegram {
             if (object instanceof TdApi.Error) {
                 LOGGER.info("[download] [async] failed, " + object);
             } else if (object instanceof TdApi.File) {
-                LOGGER.info("[download] [async] task created, localId=" + ((TdApi.File) object).id);
+                LOGGER.info("[download] [async] download started, localId=" + ((TdApi.File) object).id);
+                LOCAL_FILE_ACTIVE_SET.add(((TdApi.File) object).id);
             }
         });
         LOGGER.info("[download] [sync] command sent");
@@ -1566,6 +1561,7 @@ public final class Autolegram {
     }
 
     public static void main(String[] args) throws InterruptedException, IOException {
+        LOGGER.info("Autolegram build 12-01-2024");
         Locale.setDefault(new Locale("en", "EN"));
         Thread.currentThread().setName("main");
         loadConfig();
