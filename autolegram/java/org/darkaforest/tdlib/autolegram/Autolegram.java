@@ -16,18 +16,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.text.DecimalFormat;
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.NavigableSet;
-import java.util.Properties;
-import java.util.Set;
-import java.util.TreeSet;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -146,6 +135,10 @@ public final class Autolegram {
     private static long lastFilesDriveUpdatedTime = 0;
 
     private static boolean filesDriveLoopStarted = false;
+
+    private static boolean filebotPause = false;
+
+    private static String lastFileBotTokenSent = "";
 
     private static class OrderedChat implements Comparable<OrderedChat> {
         final long chatId;
@@ -601,10 +594,44 @@ public final class Autolegram {
                     if (text.contains("稍候") || text.contains("未找到")) {
                         LOGGER.info("[message][file bot] need try later");
                     }
+                    if (text.contains("请求媒体过于频繁")) {
+                        LOGGER.info("[message][file bot] pause because of telegram limit");
+                        if (!lastFileBotTokenSent.isEmpty()) {
+                            LOGGER.info("[message][file bot] re add to queue " + lastFileBotTokenSent);
+                            queue.offer(lastFileBotTokenSent);
+                        }
+                        sendMessage(telegramChatFilesDriveId, "pause because of telegram limit");
+                        pauseFileBot(2);
+                    }
+                    if (text.contains("已达到使用额度")) {
+                        LOGGER.info("[message][file bot] pause because of filebot limit");
+                        if (!lastFileBotTokenSent.isEmpty()) {
+                            LOGGER.info("[message][file bot] re add to queue " + lastFileBotTokenSent);
+                            queue.offer(lastFileBotTokenSent);
+                        }
+                        sendMessage(telegramChatFilesDriveId, "pause because of filebot limit");
+                        pauseFileBot(12);
+                    }
                 }
             }
             LOGGER.info("[message][file bot] received a reply");
         }
+    }
+
+    private synchronized static void pauseFileBot(int hours) {
+        if (filebotPause) {
+            LOGGER.info("[message][file bot] already paused");
+            return;
+        }
+        LOGGER.info("[message][file bot] pause start for " + hours + " hours");
+        filebotPause = true;
+        new Timer().schedule(new TimerTask() {
+            @Override
+            public void run() {
+                LOGGER.info("[message][file bot] pause end for " + hours + " hours");
+                filebotPause = false;
+            }
+        }, (long) hours * 60 * 60 * 1000);
     }
 
     private static String getUserNameSafe(TdApi.Usernames usernames) {
@@ -790,7 +817,7 @@ public final class Autolegram {
     }
 
     private static void filebotKickStart() {
-        if (queue.isEmpty()) {
+        if (filebotPause || queue.isEmpty()) {
             return;
         }
         try {
@@ -799,6 +826,7 @@ public final class Autolegram {
             throw new RuntimeException(e);
         }
         String token = queue.poll();
+        lastFileBotTokenSent = token;
         LOGGER.info("[message] [file bot] start to deal with " + token);
         sendMessage(telegramChatFilesDriveId, token);
     }
