@@ -594,6 +594,15 @@ public final class Autolegram {
                     if (text.contains("稍候") || text.contains("未找到")) {
                         LOGGER.info("[message][file bot] need try later");
                     }
+                    if (text.contains("黑名单")) {
+                        LOGGER.info("[message][file bot] pause because of block list limit");
+                        if (!lastFileBotTokenSent.isEmpty()) {
+                            LOGGER.info("[message][file bot] re add to queue " + lastFileBotTokenSent);
+                            queue.offer(lastFileBotTokenSent);
+                        }
+                        sendMessage(telegramChatFilesDriveId, "pause because of block list limit");
+                        pauseFileBot(6);
+                    }
                     if (text.contains("请求媒体过于频繁")) {
                         LOGGER.info("[message][file bot] pause because of telegram limit");
                         if (!lastFileBotTokenSent.isEmpty()) {
