@@ -560,7 +560,8 @@ public final class Autolegram {
     }
 
     private static void onNewFilesDriveBotMessageUpdated(TdApi.Chat chat, long senderId, TdApi.Message message) {
-        if (!filesDriveLoopStarted) {
+        if (!filesDriveLoopStarted || filebotPause) {
+            LOGGER.info("[message][file bot] received but paused");
             return;
         }
         if (chat.id == telegramChatFilesDriveId && senderId == telegramChatFilesDriveId) {
