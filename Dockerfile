@@ -1,4 +1,4 @@
-FROM darkaforest/autolegram:latest
+FROM darkaforest/autolegram:base
 COPY . /usr/autolegram/
 WORKDIR /usr/autolegram/
 RUN rm -rf .git \
