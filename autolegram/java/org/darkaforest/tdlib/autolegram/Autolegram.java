@@ -560,7 +560,7 @@ public final class Autolegram {
     }
 
     private static void onNewFilesDriveBotMessageUpdated(TdApi.Chat chat, long senderId, TdApi.Message message) {
-        if (!filesDriveLoopStarted || filebotPause) {
+        if (!filesDriveLoopStarted) {
             LOGGER.info("[message][file bot] received but paused");
             return;
         }
@@ -587,6 +587,10 @@ public final class Autolegram {
                 } catch (InterruptedException e) {
                     throw new RuntimeException(e);
                 }
+                return;
+            }
+            if (filebotPause) {
+                LOGGER.info("[message][file bot] received but paused");
                 return;
             }
             if (lastMessage.content instanceof TdApi.MessageText) {
